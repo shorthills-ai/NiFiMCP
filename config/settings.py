@@ -96,12 +96,32 @@ GEMINI_MODELS = _APP_CONFIG.get('llm', {}).get('google', {}).get('models', DEFAU
 
 # Print loaded configuration (excluding sensitive values like full NiFi server details)
 print("\nLoaded application configuration:")
+# -----Azure OpenAI support ----
+# Load Azure OpenAI API key
+AZURE_OPENAI_API_KEY = load_api_key("AZURE_OPENAI_API_KEY")
+
+# Load Azure OpenAI configuration values
+AZURE_OPENAI_ENDPOINT = load_config_value("AZURE_OPENAI_ENDPOINT", "")
+AZURE_OPENAI_API_VERSION = load_config_value("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+AZURE_OPENAI_DEPLOYMENT = load_config_value("AZURE_OPENAI_DEPLOYMENT", "")
+
+# Load Azure OpenAI models if needed (optional now, but setting it up)
+AZURE_OPENAI_MODELS_STR = load_config_value("AZURE_OPENAI_MODELS", "gpt-4o-mini")
+AZURE_OPENAI_MODELS = [model.strip() for model in AZURE_OPENAI_MODELS_STR.split(',') if model.strip()]
+
+
+# Print loaded configuration (excluding sensitive values)
+print("\nLoaded environment/model configuration:")
 print(f"OPENAI_MODELS: {OPENAI_MODELS}")
 print(f"GEMINI_MODELS: {GEMINI_MODELS}")
 print(f"GOOGLE_API_KEY configured: {'Yes' if GOOGLE_API_KEY else 'No'}")
 print(f"OPENAI_API_KEY configured: {'Yes' if OPENAI_API_KEY else 'No'}")
 nifi_server_summary = [(s.get('id', 'N/A'), s.get('name', 'N/A')) for s in get_nifi_servers()]
 print(f"NiFi Servers configured: {len(nifi_server_summary)} {nifi_server_summary if nifi_server_summary else '(None)'}")
+print(f"AZURE_OPENAI_MODELS: {AZURE_OPENAI_MODELS}")
+print(f"AZURE_OPENAI_API_KEY configured: {'Yes' if AZURE_OPENAI_API_KEY else 'No'}")
+
+# Optionally print logging config status
 print(f"Logging config loaded: {'Yes' if LOGGING_CONFIG != DEFAULT_LOGGING_CONFIG else 'No (Using Defaults)'}")
 
 # --- Deprecated Functions (Keep temporarily for reference/smooth transition if needed, but remove eventually) ---
