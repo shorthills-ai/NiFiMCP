@@ -81,11 +81,28 @@ GEMINI_MODELS_STR = load_config_value("GEMINI_MODELS", "gemini-1.5-pro-latest")
 OPENAI_MODELS = [model.strip() for model in OPENAI_MODELS_STR.split(',') if model.strip()]
 GEMINI_MODELS = [model.strip() for model in GEMINI_MODELS_STR.split(',') if model.strip()]
 
+# -----Azure OpenAI support ----
+# Load Azure OpenAI API key
+AZURE_OPENAI_API_KEY = load_api_key("AZURE_OPENAI_API_KEY")
+
+# Load Azure OpenAI configuration values
+AZURE_OPENAI_ENDPOINT = load_config_value("AZURE_OPENAI_ENDPOINT", "")
+AZURE_OPENAI_API_VERSION = load_config_value("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+AZURE_OPENAI_DEPLOYMENT = load_config_value("AZURE_OPENAI_DEPLOYMENT", "")
+
+# Load Azure OpenAI models if needed (optional now, but setting it up)
+AZURE_OPENAI_MODELS_STR = load_config_value("AZURE_OPENAI_MODELS", "gpt-4o-mini")
+AZURE_OPENAI_MODELS = [model.strip() for model in AZURE_OPENAI_MODELS_STR.split(',') if model.strip()]
+
+
 # Print loaded configuration (excluding sensitive values)
 print("\nLoaded environment/model configuration:")
 print(f"OPENAI_MODELS: {OPENAI_MODELS}")
 print(f"GEMINI_MODELS: {GEMINI_MODELS}")
 print(f"GOOGLE_API_KEY configured: {'Yes' if GOOGLE_API_KEY else 'No'}")
 print(f"OPENAI_API_KEY configured: {'Yes' if OPENAI_API_KEY else 'No'}")
+print(f"AZURE_OPENAI_MODELS: {AZURE_OPENAI_MODELS}")
+print(f"AZURE_OPENAI_API_KEY configured: {'Yes' if AZURE_OPENAI_API_KEY else 'No'}")
+
 # Optionally print logging config status
 print(f"Logging config loaded: {'Yes' if LOGGING_CONFIG != DEFAULT_LOGGING_CONFIG else 'No (Using Defaults)'}")

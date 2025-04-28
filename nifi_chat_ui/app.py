@@ -21,7 +21,7 @@ except ImportError:
 # ---------------------
 
 # Restore imports
-from chat_manager import get_gemini_response, get_openai_response, get_formatted_tool_definitions
+from chat_manager import get_gemini_response, get_openai_response, get_formatted_tool_definitions, get_azure_openai_response
 from chat_manager import configure_llms, is_initialized
 from mcp_handler import get_available_tools, execute_mcp_tool
 # Import config from the new location
@@ -88,6 +88,12 @@ with st.sidebar:
         for model in config.OPENAI_MODELS:
             available_models.append(f"OpenAI: {model}")
             model_to_provider[f"OpenAI: {model}"] = ("OpenAI", model)
+
+    # ----Azure OpenAI support ----
+    if config.AZURE_OPENAI_API_KEY and config.AZURE_OPENAI_MODELS:
+        for model in config.AZURE_OPENAI_MODELS:
+            available_models.append(f"Azure-OpenAI: {model}")
+            model_to_provider[f"Azure-OpenAI: {model}"] = ("Azure-OpenAI", model)
     
     selected_model_display_name = None
     provider = None # Will be derived from selection
@@ -102,7 +108,7 @@ with st.sidebar:
         if config.GOOGLE_API_KEY and config.GEMINI_MODELS:
             default_selection = f"Gemini: {config.GEMINI_MODELS[0]}"
         elif config.OPENAI_API_KEY and config.OPENAI_MODELS:
-             default_selection = f"OpenAI: {config.OPENAI_MODELS[0]}"
+            default_selection = f"OpenAI: {config.OPENAI_MODELS[0]}"
         
         # Ensure default is actually in the list
         if default_selection not in available_models:
@@ -341,6 +347,15 @@ def run_execution_loop(provider: str, model_name: str, base_sys_prompt: str, use
                                                         model_name=model_name, 
                                                         user_request_id=user_req_id,
                                                         action_id=llm_action_id) # Pass action_id
+                elif provider == "Azure-OpenAI":
+                    response_data = get_azure_openai_response(
+                        messages=messages_for_llm,
+                        system_prompt=system_prompt_for_llm,
+                        tools=formatted_tools,
+                        model_name=model_name,
+                        user_request_id=user_req_id,
+                        action_id=llm_action_id
+                    )
                 else:
                     st.error("Invalid provider selected.")
                     current_loop_logger.error(f"Invalid provider selected: {provider}")
