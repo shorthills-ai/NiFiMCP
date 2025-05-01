@@ -63,13 +63,14 @@ except Exception as e:
 # --- Client Initialization --- #
 # gemini_model = None # Store the initialized model - Removed, will instantiate per request
 openai_client = None
-azure_openai_client = None  # ADD this
+# azure_openai_client = None  
+azure_openai_clients: dict[str, "AzureOpenAI"] = {}   # keyed by api-version
 is_initialized = False # Flag to track whether LLM clients have been initialized 
 
 def configure_llms():
     """Configures LLM clients based on available keys and models."""
     # global gemini_model, openai_client, is_initialized # Removed gemini_model
-    global openai_client, is_initialized, azure_openai_client # Keep openai_client global for now
+    global openai_client, is_initialized, azure_openai_clients 
     
     # Configure Gemini (only API key setup here)
     if config.GOOGLE_API_KEY:
@@ -118,50 +119,38 @@ def configure_llms():
             openai_client = None
             # is_initialized = False # Mark as not initialized if setup fails - Handled below
      
-    # --- Configure Azure OpenAI (Azure hosted OpenAI) --- #
-    if config.AZURE_OPENAI_API_KEY and config.AZURE_OPENAI_ENDPOINT and config.AZURE_OPENAI_DEPLOYMENT:
+    # --- Configure Azure OpenAI (handles **all** deployments) --- #
+    if config.AZURE_OPENAI_API_KEY and config.AZURE_OPENAI_ENDPOINT:
         try:
-            azure_openai_client = None  # Reset first
             from openai import AzureOpenAI
 
-            api_key = str(config.AZURE_OPENAI_API_KEY).strip()
-            endpoint = str(config.AZURE_OPENAI_ENDPOINT).strip()
-            deployment = str(config.AZURE_OPENAI_DEPLOYMENT).strip()
-            api_version = str(config.AZURE_OPENAI_API_VERSION).strip()
+            azure_openai_clients.clear()                     # reset on hot-reload
+            api_key   = config.AZURE_OPENAI_API_KEY.strip()
+            endpoint  = config.AZURE_OPENAI_ENDPOINT.strip()
 
-            if not api_key or not endpoint or not deployment:
-                logger.error("Azure OpenAI configuration missing API key, endpoint, or deployment.")
-                azure_openai_client = None
-                is_initialized = False
-                return
-
-            logger.debug(f"Creating new Azure OpenAI client with endpoint: {endpoint}")
-
-            azure_openai_client = AzureOpenAI(
-                api_key=api_key,
-                azure_endpoint=endpoint,
-                api_version=api_version,
-                timeout=60.0,
-                max_retries=2
-            )
-
-            # Minimal test call (models.list() may not always work reliably on Azure, depending on permissions)
-            try:
-                logger.debug("Testing Azure OpenAI client with minimal model retrieval...")
-                _ = azure_openai_client.models.list()
-                logger.info(f"Azure OpenAI client configured. Available models: {config.AZURE_OPENAI_MODELS}")
-            except Exception as model_list_error:
-                logger.warning(f"Azure model listing failed or restricted: {model_list_error}. Continuing anyway.")
-
+            for meta in config.AZURE_OPENAI_DEPLOYMENTS.values():
+                ver = meta["api_version"]
+                if ver in azure_openai_clients:
+                    continue                                 # one client per version
+                azure_openai_clients[ver] = AzureOpenAI(
+                    api_key        = api_key,
+                    azure_endpoint = endpoint,
+                    api_version    = ver,
+                    timeout        = 60.0,
+                    max_retries    = 2,
+                )
+            logger.info(f"Azure OpenAI: initialised {len(azure_openai_clients)} client(s) "
+                        f"for versions {list(azure_openai_clients.keys())}")
         except Exception as e:
-            logger.error(f"Failed to initialize Azure OpenAI client: {e}", exc_info=True)
-            azure_openai_client = None
+            logger.error(f"Failed to initialise Azure OpenAI clients: {e}", exc_info=True)
+            azure_openai_clients.clear()
+
 
     # Update initialization status based on whether *at least one* client/key is ready
     # And if *at least one* model list is non-empty for the configured keys
     gemini_ready = bool(config.GOOGLE_API_KEY and config.GEMINI_MODELS)
     openai_ready = bool(openai_client and config.OPENAI_MODELS) # Check client and models
-    azure_openai_ready = bool(config.AZURE_OPENAI_API_KEY and config.AZURE_OPENAI_ENDPOINT and config.AZURE_OPENAI_DEPLOYMENT)
+    azure_openai_ready = bool(azure_openai_clients)
     
     is_initialized = gemini_ready or openai_ready or azure_openai_ready
     
@@ -1078,144 +1067,80 @@ def get_openai_response(
 
 # Later add support for flag(--shorthills) based compilation
 def get_azure_openai_response(
-    messages: List[Dict[str, Any]], 
-    system_prompt: str, 
-    tools: List[Dict[str, Any]] | None, 
-    model_name: str,  # This will be your Azure deployment name
+    messages: List[Dict[str, Any]],
+    system_prompt: str,
+    tools: List[Dict[str, Any]] | None,
+    model_name: str,                        # deployment name
     user_request_id: str | None = None,
-    action_id: str | None = None
+    action_id: str | None = None,
 ) -> Dict[str, Any]:
-    """Gets a response from Azure OpenAI model, handling potential tool calls."""
+    """Call any Azure deployment (gpt-4o, o1, o3-mini) with the right api-version & token param."""
     bound_logger = logger.bind(user_request_id=user_request_id, action_id=action_id)
 
-    if not azure_openai_client:
-        bound_logger.error("Azure OpenAI client is not configured. Cannot get response.")
-        return {"error": "Azure OpenAI not configured or configuration failed."}
+    # 1️⃣ basic sanity
+    meta = config.AZURE_OPENAI_DEPLOYMENTS.get(model_name)
+    if meta is None:
+        msg = f"Unknown Azure deployment: {model_name}"
+        bound_logger.error(msg)
+        return {"error": msg}
 
-    if not model_name or model_name not in config.AZURE_OPENAI_MODELS:
-        bound_logger.error(f"Invalid or missing Azure model (deployment) specified: {model_name}. Available: {config.AZURE_OPENAI_MODELS}")
-        return {"error": f"Invalid Azure model specified: {model_name}"}
+    api_version  = meta["api_version"]
+    token_param  = meta["token_param"]
+    client       = azure_openai_clients.get(api_version)
 
-    # Prepend system prompt if not present
-    azure_messages = messages.copy()
+    if client is None:                              # client was never initialised
+        msg = f"Azure client for api-version {api_version} is missing"
+        bound_logger.error(msg)
+        return {"error": msg}
+
+    # 2️⃣ build message list
+    azure_messages = messages[:]
     if not azure_messages or azure_messages[0]["role"] != "system":
         azure_messages.insert(0, {"role": "system", "content": system_prompt})
 
-    bound_logger.debug(f"Prepared Azure OpenAI messages with {len(azure_messages)} entries.")
+    # 3️⃣ prepare kwargs
+    kwargs: Dict[str, Any] = {
+        "model":        model_name,                 # deployment name
+        "messages":     azure_messages,
+        "tools":        tools or None,
+        "tool_choice":  "auto" if tools else None,
+        token_param:    1000,                       # default; call-site may override
+    }
 
+    # 4️⃣ network call with basic retry
     try:
-        bound_logger.info(f"Sending request to Azure OpenAI deployment: {model_name}")
-
-        # Prepare payload
-        request_payload = {
-            "deployment_id": model_name,
-            "messages": azure_messages,
-            "tools": tools if tools else None,
-            "tool_choice": "auto" if tools else None,
-        }
-
-        bound_logger.bind(
-            interface="llm",
-            direction="request",
-            data=request_payload
-        ).debug("Sending request to Azure OpenAI API")
-
-        # Actual Azure call
-        response = azure_openai_client.chat.completions.create(
-            model=model_name,   # ADD THIS LINE
-            messages=azure_messages,
-            tools=tools if tools else None,
-            tool_choice="auto" if tools else None,
-        )
-
-        bound_logger.info("Received response from Azure OpenAI deployment.")
-
-        # Serialize response for logging
-        try:
-            response_dict = {}
-            if hasattr(response, 'id'):
-                response_dict['id'] = response.id
-            if hasattr(response, 'choices') and response.choices:
-                choices = []
-                for choice in response.choices:
-                    choice_dict = {
-                        'index': getattr(choice, 'index', 0),
-                        'message': {
-                            'role': getattr(choice.message, 'role', None),
-                            'content': getattr(choice.message, 'content', None),
-                        }
-                    }
-                    if hasattr(choice.message, 'tool_calls') and choice.message.tool_calls:
-                        choice_dict['message']['tool_calls'] = [
-                            {
-                                'id': tc.id,
-                                'type': tc.type,
-                                'function': {
-                                    'name': tc.function.name,
-                                    'arguments': tc.function.arguments,
-                                }
-                            } for tc in choice.message.tool_calls
-                        ]
-                    choices.append(choice_dict)
-                response_dict['choices'] = choices
-
-            if hasattr(response, 'model'):
-                response_dict['model'] = response.model
-            if hasattr(response, 'usage'):
-                usage = response.usage
-                response_dict['usage'] = {
-                    'prompt_tokens': getattr(usage, 'prompt_tokens', 0),
-                    'completion_tokens': getattr(usage, 'completion_tokens', 0),
-                    'total_tokens': getattr(usage, 'total_tokens', 0),
-                }
-
-            response_data_for_log = response_dict
-
-        except Exception as log_e:
-            response_data_for_log = {"error": f"Failed to serialize Azure response for logging: {log_e}"}
-            bound_logger.warning(f"Could not serialize Azure response for logging: {log_e}")
-
-        bound_logger.bind(
-            interface="llm",
-            direction="response",
-            data=response_data_for_log
-        ).debug("Received response from Azure OpenAI API")
-
-        # Parse actual response
-        response_message = response.choices[0].message
-
-        response_content = response_message.content
-        response_tool_calls = response_message.tool_calls
-
-        if response_tool_calls:
-            response_tool_calls = [
-                {
-                    "id": tc.id,
-                    "type": tc.type,
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments
-                    }
-                } for tc in response_tool_calls
-            ]
-
-        token_count_in = getattr(response.usage, 'prompt_tokens', 0) if hasattr(response, 'usage') else calculate_input_tokens(messages, "openai", model_name)
-        token_count_out = getattr(response.usage, 'completion_tokens', 0) if hasattr(response, 'usage') else 0
-
-        bound_logger.debug(f"Token counts - In: {token_count_in}, Out: {token_count_out}")
-        bound_logger.debug(f"Azure OpenAI Response: Content={'present' if response_content else 'absent'}, ToolCalls={len(response_tool_calls) if response_tool_calls else 0}")
-
-        return {
-            "content": response_content,
-            "tool_calls": response_tool_calls,
-            "token_count_in": token_count_in,
-            "token_count_out": token_count_out,
-        }
-
+        response = client.chat.completions.create(**kwargs)
     except Exception as e:
-        bound_logger.error(f"Caught exception during Azure OpenAI call: {e}", exc_info=True)
-        st.error(f"Error during Azure OpenAI communication: {e}")
+        bound_logger.error(f"Azure call failed: {e}", exc_info=True)
         return {"error": str(e)}
+
+    # 5️⃣ normalise output
+    resp_msg          = response.choices[0].message
+    response_content  = resp_msg.content
+    response_toolcalls = [
+        {
+            "id": tc.id,
+            "type": tc.type,
+            "function": {
+                "name": tc.function.name,
+                "arguments": tc.function.arguments,
+            },
+        }
+        for tc in (resp_msg.tool_calls or [])
+    ]
+
+   
+    usage      = getattr(response, "usage", None)
+    token_in   = getattr(usage, "prompt_tokens", 0)      # int or 0
+    token_out  = getattr(usage, "completion_tokens", 0)  # int or 0
+
+
+    return {
+        "content":         response_content,
+        "tool_calls":      response_toolcalls,
+        "token_count_in":  token_in,
+        "token_count_out": token_out,
+    }
 
 def candidate_to_dict(candidate):
     # Helper to convert Candidate object safely for logging

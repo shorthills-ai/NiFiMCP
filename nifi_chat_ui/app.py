@@ -48,9 +48,9 @@ except ImportError:
 # ---------------------
 
 # Restore imports
-from chat_manager import get_gemini_response, get_openai_response, get_formatted_tool_definitions, get_azure_openai_response, calculate_input_tokens
-from chat_manager import configure_llms, is_initialized
-from mcp_handler import get_available_tools, execute_mcp_tool, get_nifi_servers
+from chat_manager import get_gemini_response, get_openai_response, get_formatted_tool_definitions, get_azure_openai_response
+from chat_manager import configure_llms, isfor_initialized
+from mcp_handler import get_available_tools, execute_mcp_tool
 # Import config from the new location
 try:
     from config import settings as config # Updated import
