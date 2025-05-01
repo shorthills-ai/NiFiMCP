@@ -87,7 +87,16 @@ AZURE_OPENAI_API_KEY = load_api_key("AZURE_OPENAI_API_KEY")
 
 # Load Azure OpenAI configuration values
 AZURE_OPENAI_ENDPOINT = load_config_value("AZURE_OPENAI_ENDPOINT", "")
-AZURE_OPENAI_API_VERSION = load_config_value("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-03-01-preview")
+
+# -----Azure OpenAI support ----
+AZURE_OPENAI_DEPLOYMENTS = {
+    # deployment-name :  api-version   , token-parameter
+    "gpt-4o":   {"api_version": "2024-03-01-preview", "token_param": "max_tokens"},
+    "o1":       {"api_version": "2024-12-01-preview", "token_param": "max_completion_tokens"},
+    "o3-mini":  {"api_version": "2024-12-01-preview", "token_param": "max_completion_tokens"},
+}
+
 AZURE_OPENAI_DEPLOYMENT = load_config_value("AZURE_OPENAI_DEPLOYMENT", "")
 
 # Load Azure OpenAI models if needed (optional now, but setting it up)
