@@ -1010,7 +1010,7 @@ def get_azure_openai_response(
     """Call any Azure deployment (gpt-4o, o1, o3-mini) with the right api-version & token param."""
     bound_logger = logger.bind(user_request_id=user_request_id, action_id=action_id)
 
-    # 1️⃣ basic sanity
+    # basic sanity
     meta = config.AZURE_OPENAI_DEPLOYMENTS.get(model_name)
     if meta is None:
         msg = f"Unknown Azure deployment: {model_name}"
@@ -1026,12 +1026,12 @@ def get_azure_openai_response(
         bound_logger.error(msg)
         return {"error": msg}
 
-    # 2️⃣ build message list
+    # build message list
     azure_messages = messages[:]
     if not azure_messages or azure_messages[0]["role"] != "system":
         azure_messages.insert(0, {"role": "system", "content": system_prompt})
 
-    # 3️⃣ prepare kwargs
+    # prepare kwargs
     kwargs: Dict[str, Any] = {
         "model":        model_name,                 # deployment name
         "messages":     azure_messages,
@@ -1040,14 +1040,14 @@ def get_azure_openai_response(
         token_param:    1000,                       # default; call-site may override
     }
 
-    # 4️⃣ network call with basic retry
+    # network call with basic retry
     try:
         response = client.chat.completions.create(**kwargs)
     except Exception as e:
         bound_logger.error(f"Azure call failed: {e}", exc_info=True)
         return {"error": str(e)}
 
-    # 5️⃣ normalise output
+    # normalise output
     resp_msg          = response.choices[0].message
     response_content  = resp_msg.content
     response_toolcalls = [
