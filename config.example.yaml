@@ -21,6 +21,12 @@ llm:
   openai:
     api_key: "" # Your OpenAI API Key (e.g., sk-...)
     models: ["gpt-4-turbo-preview", "gpt-3.5-turbo"] # Comma-separated list of allowed models
+  azure_openai:
+    api_key: "" # Your Azure OpenAI API Key (e.g., sk-...)
+    models: ["gpt-4-turbo-preview", "gpt-3.5-turbo"] # Comma-separated list of allowed models
+    endpoint: "" # Your Azure OpenAI endpoint (e.g., https://your-resource-name.openai.azure.com/)
+    api_version: "" # Azure OpenAI API version
+    deployment_name: "" # Your Azure OpenAI deployment name (e.g., gpt-4-turbo)
 
 # general:
 #   setting_1: "value" # Example for other potential app settings 
