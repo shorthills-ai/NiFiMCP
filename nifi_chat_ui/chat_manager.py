@@ -63,12 +63,14 @@ except Exception as e:
 # --- Client Initialization --- #
 # gemini_model = None # Store the initialized model - Removed, will instantiate per request
 openai_client = None
+# azure_openai_client = None  
+azure_openai_clients: dict[str, "AzureOpenAI"] = {}   # keyed by api-version
 is_initialized = False # Flag to track whether LLM clients have been initialized 
 
 def configure_llms():
     """Configures LLM clients based on available keys and models."""
     # global gemini_model, openai_client, is_initialized # Removed gemini_model
-    global openai_client, is_initialized # Keep openai_client global for now
+    global openai_client, is_initialized, azure_openai_clients 
     
     # Configure Gemini (only API key setup here)
     if config.GOOGLE_API_KEY:
@@ -116,18 +118,46 @@ def configure_llms():
             logger.error(f"Failed to initialize OpenAI client: {e}", exc_info=True)
             openai_client = None
             # is_initialized = False # Mark as not initialized if setup fails - Handled below
+     
+    # --- Configure Azure OpenAI (handles **all** deployments) --- #
+    if config.AZURE_OPENAI_API_KEY and config.AZURE_OPENAI_ENDPOINT:
+        try:
+            from openai import AzureOpenAI
+
+            azure_openai_clients.clear()                     # reset on hot-reload
+            api_key   = config.AZURE_OPENAI_API_KEY.strip()
+            endpoint  = config.AZURE_OPENAI_ENDPOINT.strip()
+
+            for meta in config.AZURE_OPENAI_DEPLOYMENTS.values():
+                ver = meta["api_version"]
+                if ver in azure_openai_clients:
+                    continue                                 # one client per version
+                azure_openai_clients[ver] = AzureOpenAI(
+                    api_key        = api_key,
+                    azure_endpoint = endpoint,
+                    api_version    = ver,
+                    timeout        = 60.0,
+                    max_retries    = 2,
+                )
+            logger.info(f"Azure OpenAI: initialised {len(azure_openai_clients)} client(s) "
+                        f"for versions {list(azure_openai_clients.keys())}")
+        except Exception as e:
+            logger.error(f"Failed to initialise Azure OpenAI clients: {e}", exc_info=True)
+            azure_openai_clients.clear()
+
 
     # Update initialization status based on whether *at least one* client/key is ready
     # And if *at least one* model list is non-empty for the configured keys
     gemini_ready = bool(config.GOOGLE_API_KEY and config.GEMINI_MODELS)
     openai_ready = bool(openai_client and config.OPENAI_MODELS) # Check client and models
+    azure_openai_ready = bool(azure_openai_clients)
     
-    is_initialized = gemini_ready or openai_ready
+    is_initialized = gemini_ready or openai_ready or azure_openai_ready
     
     if not is_initialized:
          logger.warning("LLM configuration incomplete: No valid API key and corresponding model list found.")
     else:
-         logger.info(f"LLM configuration status: Gemini Ready={gemini_ready}, OpenAI Ready={openai_ready}")
+         logger.info(f"LLM configuration status: Gemini Ready={gemini_ready}, OpenAI Ready={openai_ready}, Azure Ready={azure_openai_ready}")
 
 
 # Do NOT call configure_llms() during module import as it can cause
@@ -159,7 +189,7 @@ def get_formatted_tool_definitions(
         # st.warning("Failed to retrieve tools from MCP handler.") # Don't show UI warning here
         return None # Return None if fetching failed
 
-    if provider == "openai":
+    if provider in ["openai", "azure-openai"]:
         # OpenAI format matches our API format directly, but let's clean up the schema
         cleaned_tools = []
         for tool in tools:
@@ -1034,6 +1064,83 @@ def get_openai_response(
         st.error(f"An error occurred while communicating with the OpenAI API: {error_details}")
         # Return the more detailed error string if available
         return {"error": error_details}
+
+# Later add support for flag(--shorthills) based compilation
+def get_azure_openai_response(
+    messages: List[Dict[str, Any]],
+    system_prompt: str,
+    tools: List[Dict[str, Any]] | None,
+    model_name: str,                        # deployment name
+    user_request_id: str | None = None,
+    action_id: str | None = None,
+) -> Dict[str, Any]:
+    """Call any Azure deployment (gpt-4o, o1, o3-mini) with the right api-version & token param."""
+    bound_logger = logger.bind(user_request_id=user_request_id, action_id=action_id)
+
+    # basic sanity
+    meta = config.AZURE_OPENAI_DEPLOYMENTS.get(model_name)
+    if meta is None:
+        msg = f"Unknown Azure deployment: {model_name}"
+        bound_logger.error(msg)
+        return {"error": msg}
+
+    api_version  = meta["api_version"]
+    token_param  = meta["token_param"]
+    client       = azure_openai_clients.get(api_version)
+
+    if client is None:                              # client was never initialised
+        msg = f"Azure client for api-version {api_version} is missing"
+        bound_logger.error(msg)
+        return {"error": msg}
+
+    # build message list
+    azure_messages = messages[:]
+    if not azure_messages or azure_messages[0]["role"] != "system":
+        azure_messages.insert(0, {"role": "system", "content": system_prompt})
+
+    # prepare kwargs
+    kwargs: Dict[str, Any] = {
+        "model":        model_name,                 # deployment name
+        "messages":     azure_messages,
+        "tools":        tools or None,
+        "tool_choice":  "auto" if tools else None,
+        token_param:    1000,                       # default; call-site may override
+    }
+
+    # network call with basic retry
+    try:
+        response = client.chat.completions.create(**kwargs)
+    except Exception as e:
+        bound_logger.error(f"Azure call failed: {e}", exc_info=True)
+        return {"error": str(e)}
+
+    # normalise output
+    resp_msg          = response.choices[0].message
+    response_content  = resp_msg.content
+    response_toolcalls = [
+        {
+            "id": tc.id,
+            "type": tc.type,
+            "function": {
+                "name": tc.function.name,
+                "arguments": tc.function.arguments,
+            },
+        }
+        for tc in (resp_msg.tool_calls or [])
+    ]
+
+   
+    usage      = getattr(response, "usage", None)
+    token_in   = getattr(usage, "prompt_tokens", 0)      # int or 0
+    token_out  = getattr(usage, "completion_tokens", 0)  # int or 0
+
+
+    return {
+        "content":         response_content,
+        "tool_calls":      response_toolcalls,
+        "token_count_in":  token_in,
+        "token_count_out": token_out,
+    }
 
 def candidate_to_dict(candidate):
     # Helper to convert Candidate object safely for logging
