@@ -96,13 +96,14 @@ GEMINI_MODELS = _APP_CONFIG.get('llm', {}).get('google', {}).get('models', DEFAU
 
 # Print loaded configuration (excluding sensitive values like full NiFi server details)
 print("\nLoaded application configuration:")
+
 # -----Azure OpenAI support ----
 # Load Azure OpenAI API key
-AZURE_OPENAI_API_KEY = load_api_key("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_API_KEY = _APP_CONFIG.get('llm', {}).get('azure_openai', {}).get('api_key')
 
 # Load Azure OpenAI configuration values
-AZURE_OPENAI_ENDPOINT = load_config_value("AZURE_OPENAI_ENDPOINT", "")
-AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+AZURE_OPENAI_ENDPOINT = _APP_CONFIG.get('llm', {}).get('azure_openai', {}).get('endpoint', "")
+AZURE_OPENAI_API_VERSION = _APP_CONFIG.get('llm', {}).get('azure_openai', {}).get('api_version',"2024-12-01-preview")
 
 # -----Azure OpenAI support ----
 AZURE_OPENAI_DEPLOYMENTS = {
@@ -112,11 +113,11 @@ AZURE_OPENAI_DEPLOYMENTS = {
     "o3-mini":  {"api_version": AZURE_OPENAI_API_VERSION, "token_param": "max_completion_tokens"},
 }
 
-AZURE_OPENAI_DEPLOYMENT = load_config_value("AZURE_OPENAI_DEPLOYMENT", "")
+# AZURE_OPENAI_DEPLOYMENT = load_config_value("AZURE_OPENAI_DEPLOYMENT", "")
+AZURE_OPENAI_DEPLOYMENT = _APP_CONFIG.get('llm', {}).get('azure_openai', {}).get('deployment')
 
 # Load Azure OpenAI models if needed (optional now, but setting it up)
-AZURE_OPENAI_MODELS_STR = load_config_value("AZURE_OPENAI_MODELS", "gpt-4o-mini")
-AZURE_OPENAI_MODELS = [model.strip() for model in AZURE_OPENAI_MODELS_STR.split(',') if model.strip()]
+AZURE_OPENAI_MODELS = _APP_CONFIG.get('llm', {}).get('azure_openai', {}).get('models', [])
 
 
 # Print loaded configuration (excludieng sensitive values)
