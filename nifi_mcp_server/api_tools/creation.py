@@ -7,7 +7,7 @@ from loguru import logger
 from ..core import mcp
 # Removed nifi_api_client import
 # Import context variables
-from ..request_context import current_nifi_client, current_request_logger, current_user_request_id, current_action_id # Added
+from ..request_context import current_process_group,current_nifi_client, current_request_logger, current_user_request_id, current_action_id # Added
 
 from .utils import (
     tool_phases,
@@ -53,6 +53,7 @@ async def create_nifi_processor(
         A dictionary reporting the success, warning, or error status of the operation, potentially including the created processor entity details.
     """
     # Get client and logger from context
+    session_pg_id=current_process_group.get()
     nifi_client: Optional[NiFiClient] = current_nifi_client.get()
     local_logger = current_request_logger.get() or logger
     if not nifi_client:
@@ -67,6 +68,8 @@ async def create_nifi_processor(
     # --- Get IDs from context ---
     user_request_id = current_user_request_id.get() or "-"
     action_id = current_action_id.get() or "-"
+    session_pg_id=current_process_group.get()
+
     # --------------------------
 
     target_pg_id = process_group_id
@@ -75,7 +78,9 @@ async def create_nifi_processor(
         try:
             nifi_request_data = {"operation": "get_root_process_group_id"}
             local_logger.bind(interface="nifi", direction="request", data=nifi_request_data).debug("Calling NiFi API")
-            target_pg_id = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
+            target_pg_id = session_pg_id
+            if target_pg_id is None:
+                target_pg_id = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
             nifi_response_data = {"root_pg_id": target_pg_id}
             local_logger.bind(interface="nifi", direction="response", data=nifi_response_data).debug("Received from NiFi API")
         except Exception as e:
@@ -363,6 +368,7 @@ async def create_nifi_port(
     # --- Get IDs from context ---
     user_request_id = current_user_request_id.get() or "-"
     action_id = current_action_id.get() or "-"
+    session_pg_id=current_process_group.get()
     # --------------------------
 
     target_pg_id = process_group_id
@@ -371,7 +377,9 @@ async def create_nifi_port(
         try:
             nifi_request_data = {"operation": "get_root_process_group_id"}
             local_logger.bind(interface="nifi", direction="request", data=nifi_request_data).debug("Calling NiFi API")
-            target_pg_id = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
+            target_pg_id = session_pg_id
+            if target_pg_id is None:
+                target_pg_id = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
             nifi_response_data = {"root_pg_id": target_pg_id}
             local_logger.bind(interface="nifi", direction="response", data=nifi_response_data).debug("Received from NiFi API")
         except Exception as e:
@@ -453,6 +461,7 @@ async def create_nifi_process_group(
     # --- Get IDs from context ---
     user_request_id = current_user_request_id.get() or "-"
     action_id = current_action_id.get() or "-"
+    session_pg_id=current_process_group.get()
     # --------------------------
 
     target_parent_pg_id = parent_process_group_id
@@ -461,7 +470,9 @@ async def create_nifi_process_group(
         try:
             nifi_request_data = {"operation": "get_root_process_group_id"}
             local_logger.bind(interface="nifi", direction="request", data=nifi_request_data).debug("Calling NiFi API")
-            target_parent_pg_id = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
+            target_pg_id = session_pg_id
+            if target_pg_id is None:
+                target_pg_id = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
             nifi_response_data = {"root_pg_id": target_parent_pg_id}
             local_logger.bind(interface="nifi", direction="response", data=nifi_response_data).debug("Received from NiFi API")
         except Exception as e:
@@ -550,6 +561,7 @@ async def create_nifi_flow(
     # --- Get IDs from context ---
     user_request_id = current_user_request_id.get() or "-"
     action_id = current_action_id.get() or "-"
+    session_pg_id=current_process_group.get()
     # --------------------------
     
     results = []
@@ -571,7 +583,9 @@ async def create_nifi_flow(
 
             # Determine the parent ID for the new PG (defaults to root if not specified)
             if parent_pg_id_for_new_group is None:
-                parent_pg_id_for_new_group = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
+                parent_pg_id_for_new_group = session_pg_id
+                if parent_pg_id_for_new_group is None:
+                    parent_pg_id_for_new_group = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
                 local_logger.info(f"No explicit parent ID for new group, using root: {parent_pg_id_for_new_group}")
 
             # Call create_nifi_process_group tool logic (or direct client call)
@@ -591,7 +605,9 @@ async def create_nifi_flow(
             local_logger.info(f"Successfully created process group '{pg_name}' with ID {target_pg_id}. Flow will be built inside.")
         
         elif target_pg_id is None:
-            target_pg_id = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
+            target_pg_id = session_pg_id
+            if target_pg_id is None:
+                target_pg_id = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
             local_logger.info(f"No process group specified, using root group: {target_pg_id}")
         else:
             local_logger.info(f"Using existing process group: {target_pg_id}")

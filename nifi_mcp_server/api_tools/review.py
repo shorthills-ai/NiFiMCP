@@ -30,7 +30,7 @@ from nifi_mcp_server.flow_documenter import (
 )
 
 # Import context variables
-from ..request_context import current_nifi_client, current_request_logger # Added
+from ..request_context import current_nifi_client, current_request_logger,current_process_group # Added
 # Import new context variables for IDs
 from ..request_context import current_user_request_id, current_action_id # Added
 
@@ -344,10 +344,13 @@ async def list_nifi_objects(
     # --------------------------
 
     try:
+        session_pg_id = current_process_group.get() or None
         target_pg_id = process_group_id
         if not target_pg_id:
-            local_logger.info("process_group_id not provided, defaulting to root.")
-            target_pg_id = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
+            target_pg_id = session_pg_id
+            if not target_pg_id:
+                local_logger.info("process_group_id not provided, defaulting to root.")
+                target_pg_id = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
             local_logger.info(f"Resolved root process group ID: {target_pg_id}")
 
         local_logger.info(f"Listing NiFi objects of type '{object_type}' in scope '{search_scope}' for PG '{target_pg_id}'")
@@ -574,7 +577,7 @@ async def document_nifi_flow(
         "unconnected_components": {"processors": [], "ports": []},
         "errors": []
     }
-
+    session_pg_id = current_process_group.get()
     target_pg_id = process_group_id
     
     try:
@@ -594,7 +597,9 @@ async def document_nifi_flow(
             local_logger.info(f"Determined target process group ID: {target_pg_id} from starting processor.")
         elif not target_pg_id:
             local_logger.info("No process_group_id or starting_processor_id provided, defaulting to root process group.")
-            target_pg_id = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
+            target_pg_id = session_pg_id
+            if not target_pg_id:
+                target_pg_id = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
             if not target_pg_id:
                  raise ToolError("Could not retrieve the root process group ID.")
             results["start_point"] = {"type": "process_group", "id": target_pg_id, "name": "Root"}
@@ -957,6 +962,7 @@ async def get_process_group_status(
     local_logger = current_request_logger.get() or logger
     user_request_id = current_user_request_id.get() or "-"
     action_id = current_action_id.get() or "-"
+    session_pg_id = current_process_group.get()
 
     if not nifi_client:
         raise ToolError("NiFi client not found in context.")
@@ -987,9 +993,15 @@ async def get_process_group_status(
         target_pg_id = process_group_id
         if not target_pg_id:
             local_logger.info("process_group_id not provided, resolving root.")
-            target_pg_id = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
+            target_pg_id = session_pg_id
+            if not target_pg_id:
+                target_pg_id = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
+                results["process_group_name"] = "Root"
+            else:
+                # Use the session PG ID as the target
+                results["process_group_name"] = await _get_process_group_name(target_pg_id)
             local_logger.info(f"Resolved root process group ID: {target_pg_id}")
-            results["process_group_name"] = "Root"
+            
         else:
             # Use helper to get name, handles errors internally
             results["process_group_name"] = await _get_process_group_name(target_pg_id)

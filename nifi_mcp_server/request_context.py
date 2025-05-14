@@ -11,7 +11,7 @@ current_nifi_client: ContextVar[Optional[NiFiClient]] = ContextVar("current_nifi
 current_request_logger: ContextVar[Optional[Logger]] = ContextVar("current_request_logger", default=None)
 current_user_request_id: ContextVar[Optional[str]] = ContextVar("current_user_request_id", default=None)
 current_action_id: ContextVar[Optional[str]] = ContextVar("current_action_id", default=None)
-
+current_process_group : ContextVar[Optional[str]] = ContextVar("current_process_group", default=None)
 # Usage example (in tool functions):
 # from .request_context import current_nifi_client, current_request_logger, current_user_request_id, current_action_id
 #

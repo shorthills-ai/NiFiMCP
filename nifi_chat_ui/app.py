@@ -50,7 +50,7 @@ except ImportError:
 # Restore imports
 from chat_manager import get_gemini_response, get_openai_response, get_formatted_tool_definitions, calculate_input_tokens
 from chat_manager import configure_llms, is_initialized
-from mcp_handler import get_available_tools, execute_mcp_tool, get_nifi_servers
+from mcp_handler import get_available_tools, execute_mcp_tool, get_nifi_servers,get_processor_groups
 # Import config from the new location
 try:
     from config import settings as config # Updated import
@@ -95,6 +95,12 @@ if "selected_nifi_server_id" not in st.session_state:
     # Default to the first server's ID if available, otherwise None
     st.session_state.selected_nifi_server_id = st.session_state.nifi_servers[0]["id"] if st.session_state.nifi_servers else None
     logger.info(f"Initial NiFi server selection set to: {st.session_state.selected_nifi_server_id}")
+if "process_groups" not in st.session_state:
+    st.session_state.process_groups = [] # Initialize process groups in session state
+    if "selected_nifi_server_id" in st.session_state:
+        logger.info(f"Fetching process groups for server ID: {st.session_state.selected_nifi_server_id}")
+        st.session_state.process_groups=get_processor_groups(selected_nifi_server_id=st.session_state.selected_nifi_server_id)
+
 # ---------------------------------------------
 
 # --- Load System Prompt --- 
@@ -150,14 +156,23 @@ with st.sidebar:
             default_selection = available_models[0] # Fallback to first item
         
         default_index = available_models.index(default_selection)
-        
+
         selected_model_display_name = st.selectbox(
             "Select LLM Model:", 
             available_models, 
             index=default_index,
             key="model_select" # Use a key to track selection
         )
+        # Create a mapping of names to IDs for lookup
+        pg_name_to_id = {pg['name']: pg['id'] for pg in st.session_state.process_groups}
         
+        # Display names but store ID on change
+        selected_process_group = st.selectbox(
+            "Select Process Group:", 
+            list(pg_name_to_id.keys()),
+            key="pg_name" # Changed key to indicate it stores name
+        )
+
         if selected_model_display_name:
             provider, model_name = model_to_provider[selected_model_display_name]
             logger.debug(f"Selected Model: {model_name}, Provider: {provider}")
@@ -285,7 +300,6 @@ with st.sidebar:
         help="The maximum approximate number of tokens to include in the request to the LLM when auto-pruning is enabled."
     )
     # --------------------------
-
     # --- History Clear --- 
     def clear_chat_callback():
         st.session_state.messages = []
@@ -640,7 +654,9 @@ def run_execution_loop(provider: str, model_name: str, base_sys_prompt: str, use
                         params=arguments,
                         selected_nifi_server_id=current_nifi_server_id, # Pass selected server ID
                         user_request_id=user_req_id, 
-                        action_id=llm_action_id # Use llm_action_id here
+                        action_id=llm_action_id, # Use llm_action_id here
+                        selected_nifi_pg_id=pg_name_to_id.get(selected_process_group, None) # Pass selected process group ID
+
                     )
                     
                     # Format result for the LLM

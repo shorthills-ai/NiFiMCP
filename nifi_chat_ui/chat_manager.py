@@ -153,7 +153,6 @@ def get_formatted_tool_definitions(
     # Use the provided raw_tools list instead of fetching
     # tools = get_available_tools(user_request_id=user_request_id) # REMOVED fetch
     tools = raw_tools # Use the passed-in list
-    
     if not tools:
         bound_logger.warning("No raw tools provided for formatting.")
         # st.warning("Failed to retrieve tools from MCP handler.") # Don't show UI warning here
