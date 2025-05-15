@@ -101,6 +101,8 @@ async def create_nifi_processor(
             "position": position,
             "config": properties
         }
+        if not await nifi_client.is_descendant(target_pg_id, session_pg_id):
+            raise ToolError(f"Target process group {target_pg_id} is not a descendant of the current process group {session_pg_id}.")
         local_logger.bind(interface="nifi", direction="request", data=nifi_request_data).debug("Calling NiFi API")
         processor_entity = await nifi_client.create_processor(
             process_group_id=target_pg_id,
@@ -177,6 +179,7 @@ async def create_nifi_connection(
     # --- Get IDs from context ---
     user_request_id = current_user_request_id.get() or "-"
     action_id = current_action_id.get() or "-"
+    session_pg_id=current_process_group.get()
     # --------------------------
 
     local_logger = local_logger.bind(source_id=source_id, target_id=target_id, relationships=relationships)
@@ -209,7 +212,9 @@ async def create_nifi_connection(
                     local_logger.info(f"Source component {source_id} identified as an OUTPUT_PORT.")
                 except ValueError:
                     raise ToolError(f"Source component with ID {source_id} not found or is not connectable.")
-
+        if session_pg_id:
+            if not await nifi_client.is_descendant(source_entity.get('component',{}).get("parentGroupId"),session_pg_id):
+                raise ToolError(f"Source component {source_id} is not in the current process group {session_pg_id}.")
         local_logger.info(f"Fetching details for target component {target_id}...")
         try:
             target_entity = await nifi_client.get_processor_details(target_id)
@@ -398,6 +403,8 @@ async def create_nifi_port(
             "name": name,
             "position": position
         }
+        if not await nifi_client.is_descendant(target_pg_id, session_pg_id):
+            raise ToolError(f"Target process group {target_pg_id} is not a descendant of the current process group {session_pg_id}.")
         local_logger.bind(interface="nifi", direction="request", data=nifi_request_data).debug("Calling NiFi API")
 
         if port_type == "input":
@@ -470,9 +477,9 @@ async def create_nifi_process_group(
         try:
             nifi_request_data = {"operation": "get_root_process_group_id"}
             local_logger.bind(interface="nifi", direction="request", data=nifi_request_data).debug("Calling NiFi API")
-            target_pg_id = session_pg_id
-            if target_pg_id is None:
-                target_pg_id = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
+            target_parent_pg_id = session_pg_id
+            if target_parent_pg_id is None:
+                target_parent_pg_id = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
             nifi_response_data = {"root_pg_id": target_parent_pg_id}
             local_logger.bind(interface="nifi", direction="response", data=nifi_response_data).debug("Received from NiFi API")
         except Exception as e:
@@ -491,6 +498,8 @@ async def create_nifi_process_group(
             "name": name,
             "position": position
         }
+        if not await nifi_client.is_descendant(target_parent_pg_id, session_pg_id):
+            raise ToolError(f"Target process group {target_parent_pg_id} is not a descendant of the current process group {session_pg_id}.")
         local_logger.bind(interface="nifi", direction="request", data=nifi_request_data).debug("Calling NiFi API")
 
         pg_entity = await nifi_client.create_process_group(target_parent_pg_id, name, position)
@@ -587,7 +596,9 @@ async def create_nifi_flow(
                 if parent_pg_id_for_new_group is None:
                     parent_pg_id_for_new_group = await nifi_client.get_root_process_group_id(user_request_id=user_request_id, action_id=action_id)
                 local_logger.info(f"No explicit parent ID for new group, using root: {parent_pg_id_for_new_group}")
-
+            else:
+                if not await nifi_client.is_descendant(parent_pg_id_for_new_group, session_pg_id):
+                    raise ToolError(f"Parent process group {parent_pg_id_for_new_group} is not a descendant of the current process group {session_pg_id}.")
             # Call create_nifi_process_group tool logic (or direct client call)
             pg_creation_result = await create_nifi_process_group(
                 name=pg_name,

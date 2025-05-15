@@ -354,7 +354,8 @@ async def list_nifi_objects(
             local_logger.info(f"Resolved root process group ID: {target_pg_id}")
 
         local_logger.info(f"Listing NiFi objects of type '{object_type}' in scope '{search_scope}' for PG '{target_pg_id}'")
-
+        if not await nifi_client.is_descendant(target_pg_id, session_pg_id):
+            raise ToolError(f"Target process group {target_pg_id} is not a descendant of the current session process group {session_pg_id}.")
         # --- Process Group Handling --- 
         if object_type == "process_groups":
             local_logger.debug("Handling object_type 'process_groups'...")
@@ -459,7 +460,7 @@ async def get_nifi_object_details(
     local_logger.info(f"Getting details for NiFi object type '{object_type}' with ID '{object_id}'")
     nifi_req = {"operation": f"get_{object_type}_details", "id": object_id}
     local_logger.bind(interface="nifi", direction="request", data=nifi_req).debug("Calling NiFi API")
-
+    session_pg_id = current_process_group.get() or None
     try:
         details = {}
         if object_type == "processor":
@@ -487,7 +488,15 @@ async def get_nifi_object_details(
         else:
             # Should not happen due to Literal validation, but good practice
             raise ToolError(f"Invalid object_type specified: {object_type}")
-            
+        if session_pg_id:
+            if object_type == "process_group":
+                # Check if the process group is a descendant of the session process group
+                if not await nifi_client.is_descendant(object_id, session_pg_id):
+                    raise ToolError(f"Process group {object_id} is not a descendant of the current session process group {session_pg_id}.")
+            else:
+                # Check if the object is a descendant of the session process group
+                if not await nifi_client.is_descendant(details.get("component", {}).get("parentGroupId"), session_pg_id):
+                    raise ToolError(f"{object_type.capitalize()} {object_id} is not a descendant of the current session process group {session_pg_id}.")
         local_logger.bind(interface="nifi", direction="response", data={
             "object_id": object_id, 
             "object_type": object_type, 
@@ -606,6 +615,8 @@ async def document_nifi_flow(
             local_logger.info(f"Resolved root process group ID: {target_pg_id}")
         else:
             # PG ID was provided, get its name for the start point
+            if not await nifi_client.is_descendant(target_pg_id, session_pg_id):
+                raise ToolError(f"Target process group {target_pg_id} is not a descendant of the current session process group {session_pg_id}.")
             pg_name = await _get_process_group_name(target_pg_id)
             results["start_point"] = {"type": "process_group", "id": target_pg_id, "name": pg_name}
             local_logger.info(f"Using provided process group ID: {target_pg_id} ({pg_name})")
@@ -827,7 +838,7 @@ async def document_nifi_flow(
 @tool_phases(["Review", "Operate"])
 async def search_nifi_flow(
     query: str,
-    filter_object_type: Optional[Literal["processor", "connection", "port", "process_group"]] = None,
+    filter_object_type: Optional[Literal["processor", "connection", "port", "process_group","process_groups"]] = None,
     filter_process_group_id: Optional[str] = None,
     # mcp_context: dict = {} # Removed context parameter
 ) -> Dict[str, List[Dict]]:
@@ -855,7 +866,9 @@ async def search_nifi_flow(
     # Get client and logger from context variables
     nifi_client: Optional[NiFiClient] = current_nifi_client.get()
     local_logger = current_request_logger.get() or logger
-
+    session_pg_id = current_process_group.get()
+    if not filter_process_group_id:
+        filter_process_group_id = session_pg_id
     if not nifi_client:
         raise ToolError("NiFi client not found in context.")
     if not isinstance(nifi_client, NiFiClient):
@@ -880,6 +893,7 @@ async def search_nifi_flow(
             "processor": "processorResults",
             "connection": "connectionResults",
             "process_group": "processGroupResults",
+            "process_groups": "processGroupResults", # Alias for process_group
             "input_port": "inputPortResults", # Map generic port to specific results
             "output_port": "outputPortResults" # Map generic port to specific results
         }
@@ -905,10 +919,17 @@ async def search_nifi_flow(
                     if filter_process_group_id:
                         item_pg_id = item.get("groupId")
                         if item_pg_id != filter_process_group_id:
-                            # TODO: Implement recursive check if needed
-                            # For now, only direct parent match
-                            local_logger.trace(f"Skipping item {item.get('id')} due to PG filter mismatch (Item PG: {item_pg_id}, Filter PG: {filter_process_group_id})")
-                            continue # Skip if PG ID doesn't match
+                            try:
+                                # Check if the item's process group is a descendant of the filter process group
+                                if not await nifi_client.is_descendant(item_pg_id, filter_process_group_id):
+                                    # Skip this item if it's not in the filter process group hierarchy
+                                    local_logger.debug(f"Skipping item {item.get('id')} due to PG filter mismatch (Item PG: {item_pg_id}, Filter PG: {filter_process_group_id})")
+                                    continue
+                            except Exception as e:
+                                local_logger.warning(f"Error checking process group hierarchy for {item.get('id')}: {e}")
+                                # Skip items where we can't verify the hierarchy
+                                continue
+                            
                     
                     # Add basic info for the summary
                     filtered_list.append({
@@ -1005,6 +1026,8 @@ async def get_process_group_status(
         else:
             # Use helper to get name, handles errors internally
             results["process_group_name"] = await _get_process_group_name(target_pg_id)
+            if not await nifi_client.is_descendant(target_pg_id, session_pg_id):
+                raise ToolError(f"Process group {target_pg_id} is not a descendant of the current session process group {session_pg_id}.")
         
         results["process_group_id"] = target_pg_id
         local_logger = local_logger.bind(process_group_id=target_pg_id) # Bind resolved ID
