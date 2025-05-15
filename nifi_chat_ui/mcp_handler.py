@@ -58,18 +58,43 @@ def get_nifi_servers() -> List[Dict[str, str]]:
         bound_logger.exception(f"Unexpected error fetching NiFi servers. URL: {url}") # Includes traceback
         return []
 
+def get_processor_groups(selected_nifi_server_id: str) -> List[Dict[str, str]]:
+    """Fetches the list of processor groups from the specified NiFi server via the API."""
+    url = f"{API_BASE_URL}/config/processor_groups"
+    headers = {
+        "X-Request-ID":  "-",
+        "X-Action-ID":  "-",
+        "Content-Type": "application/json"
+    }
+    headers['X-Nifi-Server-Id'] = selected_nifi_server_id # Add the NiFi Server ID header
+    try:
+        response = requests.get(url, timeout=30,headers=headers) # Add timeout and headers
+        
+        response.raise_for_status()
+        groups = response.json()
+        if isinstance(groups, list):
+            logger.info(f"Successfully retrieved {len(groups)} processor groups")
+            return groups
+        else:
+            logger.error(f"API Error: Unexpected format received for processor groups (expected list, got {type(groups)})")
+            return []
+    except Exception as e:
+        logger.error("Unexpected error fetching processor groups")
+        return []
+
 # --- Tool Execution (Synchronous HTTP) --- #
 def execute_mcp_tool(
     tool_name: str, 
     params: dict,
     selected_nifi_server_id: str | None, # Added parameter
     user_request_id: str | None = None, # Added context ID
-    action_id: str | None = None # Added context ID
+    action_id: str | None = None, # Added context ID
+    selected_nifi_pg_id: str | None = None # Added parameter
 ) -> dict | str:
     """Executes a tool call via the REST API."""
     # Bind context IDs for logging within this function call
     bound_logger = logger.bind(user_request_id=user_request_id, action_id=action_id, nifi_server_id=selected_nifi_server_id)
-    
+    selected_nifi_pg=""
     url = f"{API_BASE_URL}/tools/{tool_name}"
 
     # Log context IDs explicitly for debugging
@@ -91,7 +116,8 @@ def execute_mcp_tool(
         "context": {
             "user_request_id": user_request_id or "-",
             "action_id": action_id or "-",
-            "nifi_server_id": selected_nifi_server_id or "-"
+            "nifi_server_id": selected_nifi_server_id or "-",
+            "process_group": selected_nifi_pg or "-"
         }
     }
 
@@ -104,6 +130,8 @@ def execute_mcp_tool(
     # Add the NiFi Server ID header if provided
     if selected_nifi_server_id:
         headers["X-Nifi-Server-Id"] = selected_nifi_server_id
+    if selected_nifi_pg_id:
+        headers["X-Nifi-Pg-Id"] = selected_nifi_pg_id
     else:
         # Log a warning or error if the ID is missing, as it's now required by the backend
         bound_logger.error("Missing NiFi Server ID for tool execution request. This is required.")

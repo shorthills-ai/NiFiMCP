@@ -39,7 +39,7 @@ from .core import mcp, get_nifi_client
 from config.logging_setup import request_context # Adjust import path if needed
 
 # --- Import ContextVars --- #
-from .request_context import current_nifi_client, current_request_logger, current_user_request_id, current_action_id # Added
+from .request_context import current_process_group, current_nifi_client, current_request_logger, current_user_request_id, current_action_id # Added
 
 from mcp.shared.exceptions import McpError # Base error
 from mcp.server.fastmcp.exceptions import ToolError # Tool-specific errors
@@ -156,6 +156,47 @@ async def list_nifi_servers(request: Request):
     except Exception as e:
         bound_logger.error(f"Error retrieving NiFi server list: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error retrieving NiFi server list.")
+@app.get("/config/processor_groups", response_model=List[Dict[str, str]], tags=["Configuration"])
+async def list_processor_groups(request: Request,nifi_server_id: Optional[str] = Header(None, alias="X-Nifi-Server-Id")):
+    """Returns a list of configured NiFi processor_groups"""
+    user_request_id = request.state.user_request_id if hasattr(request.state, 'user_request_id') else "-"
+    action_id = request.state.action_id if hasattr(request.state, 'action_id') else "-"
+    bound_logger = logger.bind(user_request_id=user_request_id, action_id=action_id)
+
+    bound_logger.info("Request received for /config/processor_groups")
+    nifi_client = None # Define outside try block for cleanup
+    client_token = None # Token for contextvar reset
+    logger_token = None # Token for contextvar reset
+    try:
+        # --- Get NiFi Client for this request --- #
+        bound_logger.debug(f"Attempting to get NiFi client for server ID: {nifi_server_id}")
+        nifi_client = await get_nifi_client(nifi_server_id, bound_logger=bound_logger)
+        bound_logger.debug(f"Successfully obtained authenticated NiFi client for {nifi_server_id}")
+        # -------------------------------------- #
+        
+        # --- Set ContextVars --- #
+        client_token = current_nifi_client.set(nifi_client)
+        logger_token = current_request_logger.set(bound_logger)
+        root_pg_id =await nifi_client.get_root_process_group_id()
+        res=await nifi_client.get_process_groups(root_pg_id) # Pre-fetch to ensure client is valid
+        return res
+    except Exception as e:
+        bound_logger.error(f"Error retrieving NiFi process_groups list: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error retrieving NiFi process_groups list.")
+    finally:
+        # --- Reset ContextVars --- #
+        if client_token:
+            current_nifi_client.reset(client_token)
+            bound_logger.trace("Reset NiFi client context variable.")
+        if logger_token:
+            current_request_logger.reset(logger_token)
+            bound_logger.trace("Reset request logger context variable.")
+        # ------------------------ #
+        # --- Clean up NiFi Client --- #
+        if nifi_client:
+            bound_logger.debug(f"Closing NiFi client connection for server ID: {nifi_server_id}")
+            await nifi_client.close()
+
 
 @app.get("/tools", response_model=List[Dict[str, Any]], tags=["Tools"])
 async def get_tools(
@@ -354,7 +395,8 @@ async def execute_tool(
     tool_name: str,
     payload: ToolExecutionPayload,
     request: Request,
-    nifi_server_id: Optional[str] = Header(None, alias="X-Nifi-Server-Id")
+    nifi_server_id: Optional[str] = Header(None, alias="X-Nifi-Server-Id"),
+    pg_id:Optional[str] = Header(None, alias="X-Nifi-Pg-Id")
 ) -> Any:
     """Execute a specific MCP tool by name.
 
@@ -382,6 +424,7 @@ async def execute_tool(
     nifi_client = None # Define outside try block for cleanup
     client_token = None # Token for contextvar reset
     logger_token = None # Token for contextvar reset
+    pg_token=None
     try:
         # --- Get NiFi Client for this request --- #
         bound_logger.debug(f"Attempting to get NiFi client for server ID: {nifi_server_id}")
@@ -392,6 +435,7 @@ async def execute_tool(
         # --- Set ContextVars --- #
         client_token = current_nifi_client.set(nifi_client)
         logger_token = current_request_logger.set(bound_logger)
+        pg_token = current_process_group.set(pg_id)
         bound_logger.trace("Set NiFi client and logger in context variables.")
         # ----------------------- #
 
@@ -483,6 +527,8 @@ async def execute_tool(
         if logger_token:
             current_request_logger.reset(logger_token)
             bound_logger.trace("Reset request logger context variable.")
+        if pg_token:
+            current_process_group.reset(pg_token)
         # ------------------------ #
         # --- Clean up NiFi Client --- #
         if nifi_client:

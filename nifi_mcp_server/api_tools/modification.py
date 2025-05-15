@@ -7,7 +7,7 @@ from loguru import logger
 from ..core import mcp
 # Removed nifi_api_client import
 # Import context variables
-from ..request_context import current_nifi_client, current_request_logger # Added
+from ..request_context import current_nifi_client, current_request_logger,current_process_group # Added
 
 from .utils import (
     tool_phases,
@@ -51,6 +51,7 @@ async def update_nifi_processor_properties(
     # Get client and logger from context
     nifi_client: Optional[NiFiClient] = current_nifi_client.get()
     local_logger = current_request_logger.get() or logger
+    session_pg_id = current_process_group.get() or None
     if not nifi_client:
         raise ToolError("NiFi client context is not set. This tool requires the X-Nifi-Server-Id header.")
     if not local_logger:
@@ -86,7 +87,9 @@ async def update_nifi_processor_properties(
         current_revision = current_entity.get("revision")
         precheck_resp = {"id": processor_id, "state": current_state, "version": current_revision.get('version') if current_revision else None}
         local_logger.bind(interface="nifi", direction="response", data=precheck_resp).debug("Received from NiFi API (pre-check)")
-        
+        if session_pg_id:
+            if not await nifi_client.is_descendant(component_precheck["parentGroupId"],session_pg_id):
+                raise ToolError(f"Processor {processor_id} is not in the current process group {session_pg_id}.")
         if current_state == "RUNNING":
             error_msg = f"Processor '{component_precheck.get('name', processor_id)}' is RUNNING. Stop it before updating properties."
             local_logger.warning(error_msg)
@@ -165,6 +168,7 @@ async def delete_nifi_processor_properties(
     # Get client and logger from context
     nifi_client: Optional[NiFiClient] = current_nifi_client.get()
     local_logger = current_request_logger.get() or logger
+    session_pg_id = current_process_group.get() or None
     if not nifi_client:
         raise ToolError("NiFi client context is not set. This tool requires the X-Nifi-Server-Id header.")
     if not local_logger:
@@ -192,7 +196,9 @@ async def delete_nifi_processor_properties(
         current_config = current_component.get("config", {})
         current_properties = current_config.get("properties", {})
         current_state = current_component.get("state")
-
+        if session_pg_id:
+            if not await nifi_client.is_descendant(current_component["parentGroupId"],session_pg_id):
+                raise ToolError(f"Processor {processor_id} is not in the current process group {session_pg_id}.")
         if current_state == "RUNNING":
             error_msg = f"Processor '{current_component.get('name', processor_id)}' is RUNNING. Stop it before deleting properties."
             local_logger.warning(error_msg)
@@ -297,6 +303,7 @@ async def update_nifi_processor_relationships(
     # Get client and logger from context
     nifi_client: Optional[NiFiClient] = current_nifi_client.get()
     local_logger = current_request_logger.get() or logger
+    session_pg_id = current_process_group.get() or None
     if not nifi_client:
         raise ToolError("NiFi client context is not set. This tool requires the X-Nifi-Server-Id header.")
     if not local_logger:
@@ -319,7 +326,9 @@ async def update_nifi_processor_relationships(
         component_precheck = current_entity.get("component", {})
         current_state = component_precheck.get("state")
         local_logger.bind(interface="nifi", direction="response", data=current_entity).debug("Received from NiFi API (pre-check)")
-
+        if session_pg_id:
+            if not await nifi_client.is_descendant(component_precheck["parentGroupId"],session_pg_id):
+                raise ToolError(f"Processor {processor_id} is not in the current process group {session_pg_id}.")
         if current_state == "RUNNING":
             error_msg = f"Processor '{component_precheck.get('name', processor_id)}' is RUNNING. Stop it before updating relationships."
             local_logger.warning(error_msg)
@@ -383,6 +392,7 @@ async def update_nifi_connection(
     # Get client and logger from context
     nifi_client: Optional[NiFiClient] = current_nifi_client.get()
     local_logger = current_request_logger.get() or logger
+    session_pg_id = current_process_group.get() or None
     if not nifi_client:
         raise ToolError("NiFi client context is not set. This tool requires the X-Nifi-Server-Id header.")
     if not local_logger:
@@ -407,7 +417,9 @@ async def update_nifi_connection(
 
         current_revision = current_entity.get("revision")
         current_component = current_entity.get("component", {})
-        
+        if session_pg_id:
+            if not await nifi_client.is_descendant(current_component["parentGroupId"],session_pg_id):
+                raise ToolError(f"Processor {connection_id} is not in the current process group {session_pg_id}.")
         if not current_revision:
             raise ToolError(f"Could not retrieve revision for connection {connection_id}.")
 
@@ -479,6 +491,7 @@ async def delete_nifi_object(
     """
     # Get client and logger from context
     nifi_client: Optional[NiFiClient] = current_nifi_client.get()
+    session_pg_id = current_process_group.get() or None
     local_logger = current_request_logger.get() or logger
     if not nifi_client:
         raise ToolError("NiFi client context is not set. This tool requires the X-Nifi-Server-Id header.")
@@ -531,7 +544,9 @@ async def delete_nifi_object(
         component = current_entity.get("component", {})
         state = component.get("state")
         name = component.get("name", object_id)
-
+        if session_pg_id:
+            if not await nifi_client.is_descendant(component["parentGroupId"],session_pg_id):
+                raise ToolError(f"{object_type} {object_id} is not in the current process group {session_pg_id}.")
         if object_type != "connection" and state == "RUNNING":
              error_msg = f"{object_type.capitalize()} '{name}' ({object_id}) is currently RUNNING. It must be stopped before deletion."
              local_logger.warning(error_msg)

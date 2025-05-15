@@ -6,7 +6,7 @@ import httpx
 import uuid # Import uuid for client ID generation
 from typing import Optional, Dict, Any, Union, List, Literal # Add Union and List
 from mcp.server.fastmcp.exceptions import ToolError # Import ToolError
-
+from functools import lru_cache
 # Load environment variables from .env file - REMOVED
 # load_dotenv()
 
@@ -40,6 +40,7 @@ class NiFiClient:
         self._token = None
         # Generate a unique client ID for this instance, used for revisions
         self._client_id = str(uuid.uuid4())
+        self.pg_id= "root"
         logger.info(f"NiFiClient initialized for {self.base_url} with client ID: {self._client_id}")
 
     @property
@@ -109,6 +110,60 @@ class NiFiClient:
             logger.info("NiFi client connection closed.")
 
     # --- Placeholder for other API methods ---
+    async def list_process_groups(self, process_group_id: str = "-", action_id: str = "-",user_request_id: str = "-") -> list[dict]:
+        """Lists all process groups in the NiFi instance."""
+        local_logger = logger.bind(user_request_id=user_request_id, action_id=action_id)
+        if not self._token:
+            local_logger.error("Authentication required before listing process groups.")
+            raise NiFiAuthenticationError("Client is not authenticated. Call authenticate() first.")
+
+        client = await self._get_client()
+        endpoint = f"/process-groups/{process_group_id}/process-groups"
+        try:
+            local_logger.info(f"Fetching process groups from {self.base_url}{endpoint}")
+            response = await client.get(endpoint)
+            response.raise_for_status()
+            data = [x["id"] for x in response.json()["processGroups"]]
+            local_logger.info(f"Found {len(data)} process groups.")
+            return data
+        except httpx.HTTPStatusError as e:
+            local_logger.error(f"Failed to list process groups: {e.response.status_code} - {e.response.text}")
+            raise ConnectionError(f"Failed to list process groups: {e.response.status_code}") from e
+        except (httpx.RequestError, ValueError) as e:
+            local_logger.error(f"Error listing process groups: {e}")
+            raise ConnectionError(f"Error listing process groups: {e}") from e
+        except Exception as e:
+            local_logger.error(f"An unexpected error occurred listing process groups: {e}", exc_info=True)
+            raise ConnectionError(f"An unexpected error occurred listing process groups: {e}") from e
+    # async def get_process_group_id(self, user_request_id: str = "-", action_id: str = "-") -> str:
+    #     """Gets the ID of the process group."""
+    #     local_logger = logger.bind(user_request_id=user_request_id, action_id=action_id)
+    #     if not self._token:
+    #         local_logger.error("Authentication required before getting process group ID.")
+    #         raise NiFiAuthenticationError("Client is not authenticated. Call authenticate() first.")
+
+    #     client = await self._get_client()
+    #     endpoint = "/flow/process-groups/root"
+    #     try:
+    #         local_logger.info(f"Fetching process group ID from {self.base_url}{endpoint}")
+    #         response = await client.get(endpoint)
+    #         response.raise_for_status()
+    #         data = response.json()
+    #         process_group_id = data.get('id')
+    #         if not process_group_id:
+    #             local_logger.error(f"Process group ID not found in response structure: {data}") # Log structure on error
+    #             raise ConnectionError("Could not extract process group ID from response.")
+    #         local_logger.info(f"Retrieved process group ID: {process_group_id}")
+    #         return process_group_id
+    #     except httpx.HTTPStatusError as e:
+    #         local_logger.error(f"Failed to get process group ID: {e.response.status_code} - {e.response.text}")
+    #         raise ConnectionError(f"Failed to get process group ID: {e.response.status_code}") from e
+    #     except (httpx.RequestError, ValueError) as e:
+    #         local_logger.error(f"Error getting process group ID: {e}")
+    #         raise ConnectionError(f"Error getting process group ID: {e}") from e
+    #     except Exception as e:
+    #         local_logger.error(f"An unexpected error occurred getting process group ID: {e}", exc_info=True)
+    #         raise ConnectionError(f"An unexpected error occurred getting process group ID: {e}") from e
     async def get_root_process_group_id(self, user_request_id: str = "-", action_id: str = "-") -> str:
         """Gets the ID of the root process group."""
         local_logger = logger.bind(user_request_id=user_request_id, action_id=action_id)
@@ -815,7 +870,7 @@ class NiFiClient:
             # Response is ProcessGroupsEntity with 'processGroups' key
             groups = data.get("processGroups", [])
             logger.info(f"Found {len(groups)} child process groups in group {process_group_id}.")
-            return groups
+            return [{'id': x['id'], 'name': x['component']['name']} for x in groups]
         except httpx.HTTPStatusError as e:
             logger.error(f"Failed to list process groups for group {process_group_id}: {e.response.status_code} - {e.response.text}")
             raise ConnectionError(f"Failed to list process groups: {e.response.status_code}") from e
@@ -825,38 +880,55 @@ class NiFiClient:
         except Exception as e:
             logger.error(f"An unexpected error occurred listing process groups: {e}", exc_info=True)
             raise ConnectionError(f"An unexpected error occurred listing process groups: {e}") from e
-
-    async def get_process_group_details(self, process_group_id: str, user_request_id: str = "-", action_id: str = "-") -> dict:
-        """Fetches the details of a specific process group."""
-        local_logger = logger.bind(user_request_id=user_request_id, action_id=action_id)
+    @lru_cache
+    async def is_descendant(self,process_group_id: str, parent_process_group_id:str)->bool:
+        """Recursively gets details of process group to check if a process group is a descendant of another."""
         if not self._token:
-            local_logger.error("Authentication required before getting process group details.")
+            raise NiFiAuthenticationError("Client is not authenticated. Call authenticate() first.")
+
+        try:
+            if not process_group_id or not parent_process_group_id:
+                return False
+            if process_group_id == parent_process_group_id:
+                return True
+            logger.info(f"Checking if {process_group_id} is a descendant of {parent_process_group_id}")
+            data = await self.get_process_group_details(process_group_id)
+            # Check the parent process group ID and check recursively
+            parent_pg_id = data.get('component', {}).get('parentGroupId')
+            if not parent_pg_id:
+                return False
+            return await self.is_descendant(parent_pg_id, parent_process_group_id)
+
+        except Exception as e:
+            logger.error(f"An unexpected error occurred checking descendant status: {e}", exc_info=True)
+            raise ConnectionError(f"An unexpected error occurred checking descendant status: {e}") from e
+    async def get_process_group_details(self, process_group_id: str) -> dict:
+        """Fetches the flow details for a specific process group, often including counts."""
+        if not self._token:
             raise NiFiAuthenticationError("Client is not authenticated. Call authenticate() first.")
 
         client = await self._get_client()
         endpoint = f"/process-groups/{process_group_id}"
         try:
-            local_logger.info(f"Fetching details for process group {process_group_id} from {self.base_url}{endpoint}")
+            logger.info(f"Fetching details for process group {process_group_id} from {self.base_url}{endpoint}")
             response = await client.get(endpoint)
             response.raise_for_status()
-            group_details = response.json()
-            local_logger.info(f"Successfully fetched details for process group {process_group_id}")
-            return group_details
-
+            flow_details = response.json()
+            logger.info(f"Successfully fetched flow details for process group {process_group_id}")
+            return flow_details
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
-                local_logger.warning(f"Process group with ID {process_group_id} not found.")
-                raise ValueError(f"Process group with ID {process_group_id} not found.") from e
+                logger.warning(f"Process group flow with ID {process_group_id} not found.")
+                raise ValueError(f"Process group flow with ID {process_group_id} not found.") from e
             else:
-                local_logger.error(f"Failed to get details for process group {process_group_id}: {e.response.status_code} - {e.response.text}")
-                raise ConnectionError(f"Failed to get process group details: {e.response.status_code}, {e.response.text}") from e
+                logger.error(f"Failed to get flow details for process group {process_group_id}: {e.response.status_code} - {e.response.text}")
+                raise ConnectionError(f"Failed to get process group flow details: {e.response.status_code}, {e.response.text}") from e
         except (httpx.RequestError, ValueError) as e:
-            local_logger.error(f"Error getting details for process group {process_group_id}: {e}")
-            raise ConnectionError(f"Error getting process group details: {e}") from e
+            logger.error(f"Error getting flow details for process group {process_group_id}: {e}")
+            raise ConnectionError(f"Error getting process group flow details: {e}") from e
         except Exception as e:
-            local_logger.error(f"An unexpected error occurred getting process group details for {process_group_id}: {e}", exc_info=True)
-            raise ConnectionError(f"An unexpected error occurred getting process group details: {e}") from e
-
+            logger.error(f"An unexpected error occurred getting process group flow details for {process_group_id}: {e}", exc_info=True)
+            raise ConnectionError(f"An unexpected error occurred getting process group flow details: {e}") from e
     async def get_process_group_flow(self, process_group_id: str) -> dict:
         """Fetches the flow details for a specific process group, often including counts."""
         if not self._token:
@@ -1846,7 +1918,9 @@ async def main():
 
         # Example: List processors in root
         processors = await client.list_processors(root_id)
+        processgroups= await client.list_process_groups(process_group_id=root_id)
         print(f"Processors in root ({root_id}): {len(processors)}")
+        print(f"Process Groups in root : {len(processgroups)}")
         # for proc in processors:
         #     print(f"  - {proc.get('component', {}).get('name')} (ID: {proc.get('id')})")
 
