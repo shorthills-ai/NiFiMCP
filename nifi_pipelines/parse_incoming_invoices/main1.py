@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 import requests,os
 import base64, json
+from copy import deepcopy
+#from dot#env import load_dotenv
 from datetime import datetime, timedelta
+def helper(tmp,val):
+    #deepcopy is used to create a new instance of the template_json
+    tmp = deepcopy(tmp) 
+    tmp['contents'][0]['parts'][0]['inline_data']['data'] = val
+    return tmp
 def main():
+    #load_dotenv()
     template_json={
     "contents": [{
         "parts":[{"inline_data":
@@ -33,10 +41,10 @@ def main():
       ]
     }
   }
-}
+}   
+    GRAPH_API_URL = "https://graph.microsoft.com/v1.0"
     CLIENT_ID = os.getenv('CLIENT_ID')
     CLIENT_SECRET = os.getenv('CLIENT_SECRET')
-    token_url = 'https://api.example.com/token'
     tenant_id = os.getenv("TENANT_ID")
     refresh_token = os.getenv("refresh")
     # Define the token URL
@@ -49,54 +57,65 @@ def main():
         'refresh_token': refresh_token,
         'scope': ' '.join(SCOPES)  # Replace SCOPES with your required scopes
     }
-    config={}
-    with open('config.json', 'r') as f:config=json.load(f)
+    config = {}
+    try:
+        with open('config.json', 'r') as f:
+            config = json.load(f)
+    except FileNotFoundError:
+      with open('config.json', 'w') as f:json.dump(config, f)
+        
     token=config.get('token',{}).get('access_token')
     last_execution=config.get('last_execution')
-    token_expiry=config.get('token',{}).get('expires_in')
-    if not last_execution:
-        last_execution=datetime.now().strftime("%Y-%m-%d")+"T00:00:00Z"
-    with open('config.json', 'w') as f:json.dump(config, f)
+    token_expiry=config.get('token',{}).get('expires_in',0)
+    if not last_execution: 
+      today = datetime.now()
+      if today.day >= 15:
+          # Use current month and year
+          target_date = datetime(today.year, today.month, 15)
+      else:
+          # Use previous month and year
+          # Subtracting 15 days ensures we land in the previous month
+          target_date = today - timedelta(days=15)
+          target_date = datetime(target_date.year, target_date.month, 15)
+      last_execution=target_date.timestamp()
+      with open('config.json', 'w') as f:json.dump(config, f)
 
-    if not token or token_expiry < datetime.now():
-        # Make the request
-        last_execution = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+    if token_expiry and token_expiry < datetime.now().timestamp():
         response = requests.post(token_url, data=data)
         token = response.json()['access_token']
-        token_expiry = datetime.now() + timedelta(seconds=response.json()['expires_in'])
-        config['token']['access_token'] = token
-        config['token']['expires_in'] = response.json()['expires_in']
+        token_expiry = datetime.now().timestamp() + response.json()['expires_in']
+        config['token']={'access_token': token,'expires_in':token_expiry}
         config['last_execution']=last_execution
         with open('config.json', 'w') as f:json.dump(config, f)
    #use graph api to get all messages from inbox that contain 1 or more pdf attachments
-    endpoint =f"/me/messages?$filter=receivedDateTime ge {last_execution} and hasAttachments eq true"
+    from urllib.parse import quote
+
+    filter_datetime = datetime.fromtimestamp(last_execution).strftime('%Y-%m-%dT%H:%M:%SZ')
+    endpoint = f"{GRAPH_API_URL}/me/messages?$filter=receivedDateTime gt {filter_datetime} and hasAttachments eq true&$select=id,receivedDateTime,hasAttachments"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
     response = requests.get(endpoint, headers=headers)
-    messages = response.json()['value']
+    messages = response.json().get('value', [])
     invoices = []
+    messages = [message for message in messages if message.get('hasAttachments') == True]
+   # print(messages)
+    # Check if there are any messages
+    if not messages:
+        return
+    last_execution = datetime.strptime(messages[0]['receivedDateTime'], "%Y-%m-%dT%H:%M:%SZ").timestamp()
+    config['last_execution']=last_execution
+    with open('config.json', 'w') as f:json.dump(config, f)
     for message in messages:
         message_id = message["id"]
         # Get attachments for the message using requests
-        attachments_url = f"https://graph.microsoft.com/v1.0/me/messages/{message_id}/attachments"
+        attachments_url = f"https://graph.microsoft.com/beta/me/messages/{message_id}?$expand=attachments"
         attachments_response = requests.get(attachments_url, headers=headers)
-        attachments = attachments_response.json().get("value", [])
-
-        for attachment in attachments:
-            if attachment.get("contentType") == "application/pdf":
-                attachment_id = attachment["id"]
-                attachment_name = attachment["name"]
-                # Download PDF content using requests
-                content_url = f"https://graph.microsoft.com/v1.0/me/messages/{message_id}/attachments/{attachment_id}/$value"
-                content_response = requests.get(content_url, headers=headers)
-                content = content_response.content
-                # get base64 encoded pdf data and add to template_json and append it to invoices
-                templ=template_json.copy()
-                templ['contents'][0]['parts'][0]['inline_data']['data'] = base64.b64encode(content).decode('utf-8')
-                invoices.append(templ)
-    print(invoices)
-    return invoices
+        #print(attachments_response.json())
+        attachments = attachments_response.json().get('attachments', [])
+        invoices += [helper(template_json, attachment['contentBytes']) for attachment in attachments if attachment['contentType'] == 'application/pdf']
+    #format this list of dictionaries to a json
+    print(json.dumps(invoices)) if invoices else print("")
 if __name__ == "__main__":
-    print(main())
+    main()
