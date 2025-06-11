@@ -80,3 +80,24 @@ AZURE_OPENAI_KEY=your_azure_api_key
 AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com
 AZURE_OPENAI_DEPLOYMENT=text-embedding-ada-002
 AZURE_OPENAI_API_VERSION=2023-05-15
+
+
+## 🧩 Configuration Steps for new machine(if needed)
+
+### 2. Setup on Remote Machine (Environment Setup)
+
+SSH into the remote machine (e.g., NiFi server or worker node):
+
+```bash
+ssh nifi@<your-remote-machine-ip>
+cd ~/nifi2/users/Custom_processor/Embeddings
+python3 -m venv embeddings
+source embeddings/bin/activate
+
+
+# 🔄 Install requirements.txt
+```bash
+pip install -r requirements.txt
+
+
+Then change the working directory and command path according to it.
