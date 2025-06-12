@@ -1,37 +1,56 @@
 # 🔄 NiFi Embedding Processor Group Setup
 
-This repository contains a NiFi processor group template for generating text embeddings using either:
+This repository provides a custom NiFi processor group for generating **text embeddings** using:
 
 - **Amazon Bedrock**
 - **Microsoft Azure OpenAI**
 
----
+The processor reads input text files, generates embeddings via the selected cloud provider, and logs output for downstream processing.
 
-## 🚀 Getting Started
-
-### 1. Import the Template
-- In NiFi, go to the **Operable Canvas**.
-- Click on **Upload Template** and select the `.xml` NiFi template file provided in this repo.
-- Drag the imported template onto the canvas.
+Repo: [https://github.com/shorthills-ai/NiFiMCP](https://github.com/shorthills-ai/NiFiMCP)  
+Branch: `dev` → `Shorthills_custom_Processor`
 
 ---
 
-## 🧩 Configuration Steps
+## 📦 Components Overview
 
-### 2. Configure `GetFile` Processor
-- Open the processor group.
-- Locate the `GetFile` processor.
-- **Update the Working Directory Path**:
-  - Set it to the folder path where your input files (e.g., text chunks) will be read from.
+The processor group contains the following core NiFi components:
 
-### 3. Configure `ExecuteStreamCommand` Processor
-- Still inside the processor group:
-  - Open the **`ExecuteStreamCommand`** processor.
-  - In the **Properties** tab, click the ➕ icon to add required credentials and parameters.
+### 1. `GetFile`
+- Reads input `.txt` files from a specified directory.
+- Configurable input path.
+- **Set Working Directory** to your local folder containing text chunks.
 
-### 🔐 Required Properties
-> ⚠️ Ensure the **names match exactly** and sensitive values are marked as *sensitive*.
+### 2. `ExecuteStreamCommand`
+- Executes the `embeddings.py` script using Python to generate embeddings.
+- Accepts input from `GetFile`.
+- Requires environment variables (API keys, model names) configured as properties.
 
+### 3. `LogAttribute`
+- Logs output from `ExecuteStreamCommand`.
+- Useful for verifying embeddings and flowfile attributes.
+
+---
+
+## 🚀 Usage Instructions
+
+You can run this setup using either of the two methods:
+
+---
+
+## ✅ Method 1: Quick Setup via JSON Parameters (Recommended)
+
+> Only update API keys and model info in parameter context.
+
+### Steps:
+
+1. Open NiFi.
+2. Upload the `.xml` template via **Upload Template** in the Operable Canvas.
+3. Drag the template into the canvas.
+4. Mention the location of your python in the command path
+4. Configure Parameter Context with the following:
+
+### 🔐 Required Properties (in `ExecuteStreamCommand`)
 | Property Name                | Description                                 | Sensitive |
 |-----------------------------|---------------------------------------------|-----------|
 | `AWS_ACCESS_KEY_ID`         | Amazon Bedrock access key                   | ✅        |
@@ -44,60 +63,43 @@ This repository contains a NiFi processor group template for generating text emb
 | `EMBEDDING_MODEL`           | Set as `#{EMBEDDING_MODEL}`                | ❌        |
 | `EMBEDDING_PROVIDER`        | Set as `#{EMBEDDING_PROVIDER}`             | ❌        |
 
----
+### ⚙️ Parameter Context
 
-## ⚙️ Parameter Context Configuration
+Go to **NiFi → Parameter Contexts**, then add:
 
-Go to **NiFi → Parameter Contexts**, then either create or edit your context and add the following parameters:
-
-| Parameter Name      | Value Example (Azure / AWS)                    |
-|---------------------|------------------------------------------------|
-| `EMBEDDING_MODEL`   | e.g., `text-embedding-ada-002` / `amazon.titan-embed-text-v2:0` |
-| `EMBEDDING_PROVIDER`| `azure` or `aws`                              |
-
-Set these values based on the provider you're using, as shown below.
+| Parameter Name      | Value Example                                   |
+|---------------------|-------------------------------------------------|
+| `EMBEDDING_MODEL`   | `text-embedding-ada-002` or `amazon.titan-embed-text-v2:0` |
+| `EMBEDDING_PROVIDER`| `azure` or `aws`                                |
 
 ---
 
-## 🤖 Supported Providers & Models
+## 🛠 Method 2: Setup on Your Own Machine
 
-### ✅ Microsoft Azure OpenAI
+This method allows full customization and local script execution.
 
-| Parameter         | Value                       |
-|------------------|-----------------------------|
-| `EMBEDDING_MODEL`| `text-embedding-ada-002`     |
-| `EMBEDDING_PROVIDER`| `azure`                  |
+### Steps:
 
-**Required Azure Credentials:**
-- `AZURE_OPENAI_KEY`
-- `AZURE_OPENAI_ENDPOINT`
-- `AZURE_OPENAI_DEPLOYMENT`
-- `AZURE_OPENAI_API_VERSION`
+1. **Clone the repository**  
+   ```bash
+   git clone https://github.com/shorthills-ai/NiFiMCP -b dev
+   cd NiFiMCP/Shorthills_custom_Processor
+2. **Login to your NiFi machine/server**
 
-Example:
-```env
-AZURE_OPENAI_KEY=your_azure_api_key
-AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com
-AZURE_OPENAI_DEPLOYMENT=text-embedding-ada-002
-AZURE_OPENAI_API_VERSION=2023-05-15
+3. **Navigate to the processor folder**
+   ```bash
+    cd ~/nifi2/users/Custom_processor/Embeddings
+4. **Create a Python virtual environment**
+   ```bash
+    python3 -m venv embeddings
+    source embeddings/bin/activate
+5. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+6. **Update ExecuteStreamCommand**
+    1. **Change the Command Path to the full path of python inside your virtual environment**
 
+    2. **Change the Working Directory to where embeddings.py exists (e.g., ~/nifi2/users/Custom_processor/Embeddings)**
+7. **Rest the configuration of execute stream command and parameter context setup is same as in Method 1.**
 
-## 🧩 Configuration Steps for new machine(if needed)
-
-### 2. Setup on Remote Machine (Environment Setup)
-
-SSH into the remote machine (e.g., NiFi server or worker node):
-
-```bash
-ssh nifi@<your-remote-machine-ip>
-cd ~/nifi2/users/Custom_processor/Embeddings
-python3 -m venv embeddings
-source embeddings/bin/activate
-
-
-# 🔄 Install requirements.txt
-```bash
-pip install -r requirements.txt
-
-
-Then change the working directory and command path according to it.
+    
