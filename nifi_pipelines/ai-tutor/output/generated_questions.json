@@ -1,0 +1,332 @@
+{
+  "_id": {
+    "$oid": "325625f3-c985-43b8-85bf-8e9876ec6171"
+  },
+  "unit_outline_id": {
+    "$oid": "839aeff4-ff78-478a-8403-b50040a5e3a3"
+  },
+  "session_ids": [
+    "GMBA24_BA101_S01"
+  ],
+  "questions": [
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "MCQ",
+      "question": "What is digital transformation primarily concerned with?",
+      "options": [
+        "A process of simply digitizing existing data",
+        "Fundamentally changing how a business operates",
+        "Just implementing new technologies",
+        "Adopting social media strategies"
+      ],
+      "correct_answer": "Fundamentally changing how a business operates",
+      "explanation": "Digital transformation involves a complete rethinking of business models, processes, and structures.",
+      "difficulty": "medium",
+      "tags": [
+        "digital transformation",
+        "business model"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "MCQ",
+      "question": "Which of the following is NOT a pillar of digital transformation?",
+      "options": [
+        "Customer Experience",
+        "Cultural Shift",
+        "Vendor Lock-in",
+        "Data and Analytics"
+      ],
+      "correct_answer": "Vendor Lock-in",
+      "explanation": "Vendor lock-in is a challenge that organizations face rather than a pillar of digital transformation.",
+      "difficulty": "medium",
+      "tags": [
+        "digital transformation",
+        "pillars"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "MCQ",
+      "question": "Which company is known for transforming from a DVD rental service to a streaming service?",
+      "options": [
+        "Amazon",
+        "Netflix",
+        "Starbucks",
+        "Ford"
+      ],
+      "correct_answer": "Netflix",
+      "explanation": "Netflix started as a DVD rental service and transformed into a streaming service and then into content production.",
+      "difficulty": "medium",
+      "tags": [
+        "case study",
+        "Netflix"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "MCQ",
+      "question": "What does AI-powered transformation in digital initiatives primarily aim to do?",
+      "options": [
+        "Replace human workers",
+        "Automate processes and personalize customer experiences",
+        "Increase manual labor",
+        "Focus solely on data storage"
+      ],
+      "correct_answer": "Automate processes and personalize customer experiences",
+      "explanation": "AI and ML are used to enhance efficiency and provide tailored experiences for customers.",
+      "difficulty": "medium",
+      "tags": [
+        "AI",
+        "automation"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "MCQ",
+      "question": "Which of the following is a challenge in digital transformation?",
+      "options": [
+        "Increased customer satisfaction",
+        "Rapid technological change",
+        "Enhanced collaboration",
+        "Improved agility"
+      ],
+      "correct_answer": "Rapid technological change",
+      "explanation": "Rapid technological change can pose challenges for organizations trying to keep up.",
+      "difficulty": "medium",
+      "tags": [
+        "challenges",
+        "digital transformation"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "T/F",
+      "question": "Digital transformation is only about the implementation of new technologies.",
+      "correct_answer": "False",
+      "explanation": "Digital transformation involves rethinking business models and processes, not just implementing new tech.",
+      "difficulty": "medium",
+      "tags": [
+        "digital transformation",
+        "false statement"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "T/F",
+      "question": "Customer-centricity is a key aspect of digital transformation.",
+      "correct_answer": "True",
+      "explanation": "Focusing on customer experiences is essential for successful digital transformation.",
+      "difficulty": "medium",
+      "tags": [
+        "customer-centricity",
+        "digital transformation"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "T/F",
+      "question": "Legacy systems pose no significant challenges to digital transformation.",
+      "correct_answer": "False",
+      "explanation": "Legacy systems can limit flexibility and complicate the integration of new technologies.",
+      "difficulty": "medium",
+      "tags": [
+        "legacy systems",
+        "challenges"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "T/F",
+      "question": "AI and machine learning are not widely used in digital transformation.",
+      "correct_answer": "False",
+      "explanation": "AI and ML are increasingly essential for automating processes and improving customer experiences.",
+      "difficulty": "medium",
+      "tags": [
+        "AI",
+        "machine learning"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "T/F",
+      "question": "Data governance is important for ensuring data privacy in digital transformation.",
+      "correct_answer": "True",
+      "explanation": "Robust data governance frameworks help organizations manage data responsibly.",
+      "difficulty": "medium",
+      "tags": [
+        "data governance",
+        "privacy"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "Short-answer",
+      "question": "What are the three types of analytics mentioned in the context of FinTech?",
+      "correct_answer": "Descriptive, Predictive, and Prescriptive analytics.",
+      "key_points": [
+        "Descriptive analytics",
+        "Predictive analytics",
+        "Prescriptive analytics"
+      ],
+      "difficulty": "medium",
+      "tags": [
+        "analytics",
+        "FinTech"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "Short-answer",
+      "question": "Name one example of a company that has significantly transformed due to digital initiatives.",
+      "correct_answer": "Amazon.",
+      "key_points": [
+        "Amazon's transition from a bookstore to e-commerce",
+        "Cloud computing services"
+      ],
+      "difficulty": "medium",
+      "tags": [
+        "case study",
+        "digital transformation"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "Short-answer",
+      "question": "What is one major benefit of customer-centric digital transformation?",
+      "correct_answer": "Increased customer satisfaction.",
+      "key_points": [
+        "Improved customer loyalty",
+        "Higher customer lifetime value"
+      ],
+      "difficulty": "medium",
+      "tags": [
+        "customer-centricity",
+        "benefit"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "Short-answer",
+      "question": "What does the term 'vendor lock-in' refer to?",
+      "correct_answer": "Reliance on proprietary software or data formats that restricts adopting new digital initiatives.",
+      "key_points": [
+        "Proprietary software",
+        "Restrictions on flexibility"
+      ],
+      "difficulty": "medium",
+      "tags": [
+        "vendor lock-in",
+        "challenges"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "Short-answer",
+      "question": "What is one challenge organizations face in digital transformation regarding talent?",
+      "correct_answer": "Talent shortages in key areas like data analytics and AI.",
+      "key_points": [
+        "Cybersecurity",
+        "AI expertise"
+      ],
+      "difficulty": "medium",
+      "tags": [
+        "talent",
+        "challenges"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "Long-answer",
+      "question": "Discuss the importance of customer experience in digital transformation.",
+      "correct_answer": "Customer experience is crucial as it drives customer satisfaction, loyalty, and ultimately revenue. Organizations must understand customer needs, adapt to their expectations, and leverage technology to improve interactions. In a competitive market, providing excellent customer experiences can differentiate a company and lead to sustainable growth.",
+      "key_points": [
+        "Understanding customer needs",
+        "Leveraging technology for improvement",
+        "Driving satisfaction and loyalty"
+      ],
+      "evaluation_criteria": [
+        "Clarity of explanation",
+        "Use of relevant examples",
+        "Depth of analysis"
+      ],
+      "difficulty": "medium",
+      "tags": [
+        "customer experience",
+        "digital transformation"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "Long-answer",
+      "question": "Explain how data analytics can enhance decision-making in FinTech.",
+      "correct_answer": "Data analytics enhances decision-making by providing insights into customer behavior, market trends, and operational efficiencies. By analyzing vast amounts of data, organizations can identify patterns and make informed predictions, ultimately leading to better financial management and strategic planning. This capability enables firms to personalize services, detect fraud, and optimize operations, making them more competitive.",
+      "key_points": [
+        "Insights into customer behavior",
+        "Predictive analytics for forecasting",
+        "Fraud detection and operational optimization"
+      ],
+      "evaluation_criteria": [
+        "Relevance to FinTech",
+        "Examples provided",
+        "Analytical depth"
+      ],
+      "difficulty": "medium",
+      "tags": [
+        "data analytics",
+        "FinTech"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "Long-answer",
+      "question": "What are the implications of emerging technologies like blockchain for the financial services industry?",
+      "correct_answer": "Emerging technologies like blockchain have significant implications for the financial services industry. They enhance security and transparency in transactions, reduce costs by eliminating intermediaries, and enable new business models such as decentralized finance (DeFi). As blockchain technology matures, it will likely reshape how financial transactions are conducted, leading to greater efficiency and trust among users.",
+      "key_points": [
+        "Increased security and transparency",
+        "Cost reduction and efficiency",
+        "New business models"
+      ],
+      "evaluation_criteria": [
+        "Comprehensiveness of points",
+        "Use of real-world examples",
+        "Understanding of technology impacts"
+      ],
+      "difficulty": "medium",
+      "tags": [
+        "blockchain",
+        "financial services"
+      ]
+    },
+    {
+      "session_id": "GMBA24_BA101_S01",
+      "type": "Long-answer",
+      "question": "Describe the challenges of implementing a digital transformation strategy within an organization.",
+      "correct_answer": "Implementing a digital transformation strategy can be challenging due to various factors. These include resistance to change from employees, siloed organizational structures that hinder collaboration, lack of necessary skills among the workforce, and legacy systems that are difficult to integrate with new technologies. Additionally, organizations must navigate budget constraints and ensure alignment with strategic goals to successfully implement their digital initiatives.",
+      "key_points": [
+        "Resistance to change",
+        "Siloed structures",
+        "Skills gaps and legacy systems"
+      ],
+      "evaluation_criteria": [
+        "Identification of relevant challenges",
+        "Clarity and structure of response",
+        "Depth of understanding"
+      ],
+      "difficulty": "medium",
+      "tags": [
+        "digital transformation",
+        "challenges"
+      ]
+    }
+  ],
+  "qti_zip_url": "https://s3/quiz_packages/gmba24-ba101-s01_q01.zip",
+  "generated_by": {
+    "$oid": "900810db-bc9b-458d-9955-a747252fba2c"
+  },
+  "generated_at": {
+    "$date": "2025-06-11T12:11:21.816154Z"
+  },
+  "version": 1,
+  "is_latest": true
+}
