@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+weaviate-client
+python-dotenv
+openai>=1.0.0
+httpx
+httpx-aiohttp
+aiohttp
+python-docx
+python-pptx
