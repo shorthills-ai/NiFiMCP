@@ -4,8 +4,8 @@ import json
 import sys
 import logging
 import warnings
-from dotenv import load_dotenv
-load_dotenv()
+# from dotenv import load_dotenv
+# load_dotenv()
 from browser_use import Agent, Controller
 from langchain_openai import AzureChatOpenAI
 from pydantic import BaseModel
@@ -38,7 +38,6 @@ class Article(BaseModel):
     content: str
     source_url: str
     published_date: str
-    author: str
 
 class Articles(BaseModel):
     articles: List[Article]
@@ -54,12 +53,12 @@ You are an AI research agent. Your task is to extract the latest developments in
 - https://www.reddit.com/r/LocalLLaMA/
 
 Instructions for each source:
-1. Navigate to news articles or posts published within the last 7 days.
-2. For each relevant item, extract:
+1. Navigate to the sources and the news articles or posts inside it which are published within the last 7 days.
+2. In total return at least 7 articles or posts, with a maximum of 10 articles or posts from all sources combined.
+3. For each relevant item, extract:
    - `title`: The article or post headline.
    - `published_date`: The exact date it was published.
-   - `author`: The name of the author or poster (if available).
-   - `content`: All the content from the article or post. Focus on technical advancements, research, or product releases. Avoid opinionated or promotional fluff.
+   - `content`: Descriptive and detailed content from the article or post.
    - `source_url`: The direct URL to the article or post.
 
 Constraints:
@@ -76,8 +75,7 @@ Return your final output strictly in the following JSON format, with no extra te
         "title": "string",
         "content": "string",
         "source_url": "string",
-        "published_date": "YYYY-MM-DD",
-        "author": "string or null"
+        "published_date": "YYYY-MM-DD"
       }
     ]
   }
