@@ -2,17 +2,15 @@
 import os
 import sys
 import json
-from utils import get_today_str
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
-from utils import LLMProvider
 from langchain_openai import AzureChatOpenAI
 from pydantic import SecretStr
-# from dotenv import load_dotenv
-# Load environment variables from .env file
-# load_dotenv()
+import datetime
+from dotenv import load_dotenv
+load_dotenv()
 
 # Prepare today's date
-today_str = get_today_str()
+today_str = datetime.date.today().strftime("%B %d, %Y")
 
 # Initialize LLM
 llm = AzureChatOpenAI(
@@ -226,16 +224,6 @@ if __name__ == "__main__":
     else:
         json_path = SCRAPED_JSON
 
-    # If the JSON file does not exist, run scrape_news.py to generate it
-    FORCE_SCRAPE = os.getenv('FORCE_SCRAPE', '').strip().lower() in ('1', 'true', 'yes')
-
-    if FORCE_SCRAPE or not os.path.exists(json_path):
-        print(f"Running scrape_news.py to generate news...")
-        import subprocess
-        result = subprocess.run([sys.executable, "scrape_news.py"], capture_output=True, text=True)
-        if not os.path.exists(json_path):
-            print(f"scrape_news.py did not produce {json_path}. Exiting.")
-            sys.exit(1)
 
     with open(json_path, 'r', encoding='utf-8') as f:
         json_data = json.load(f)
