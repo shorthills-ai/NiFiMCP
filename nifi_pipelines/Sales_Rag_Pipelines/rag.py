@@ -30,6 +30,7 @@ import json
 import os
 import time
 import numpy as np
+from fastapi import Header
 from openai import AsyncAzureOpenAI
 from httpx_aiohttp import AiohttpTransport
 from aiohttp import ClientSession
@@ -40,7 +41,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 # === Load Env Variables ===
-ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
+#ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 DRIVE_ID = os.getenv("DRIVE_ID")
 WEAVIATE_URL = os.getenv("WEAVIATE_URL")
 WEAVIATE_API_KEY = os.getenv("WEAVIATE_API_KEY")
@@ -49,7 +50,7 @@ AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-ada-002")
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
-HEADERS = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Accept": "application/json"}
+#HEADERS = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Accept": "application/json"}
 import re
 # === Logging Setup ===
 logging.basicConfig(level=logging.INFO)
@@ -418,41 +419,8 @@ def encode_web_url(web_url: str) -> str:
     encoded = base64.urlsafe_b64encode(web_url.encode("utf-8")).decode("utf-8").rstrip("=")
     return f"u!{encoded}"
 
-async def delete_from_onedrive(web_url: str) -> bool:
-    try:
-        encoded_url = encode_web_url(web_url)
-        item_lookup_url = f"{GRAPH_BASE}/shares/{encoded_url}/driveItem"
-
-        async with httpx.AsyncClient() as client:
-            lookup_response = await client.get(item_lookup_url, headers=HEADERS)
-            if lookup_response.status_code != 200:
-                logger.warning(f"Could not resolve item for deletion: {web_url}")
-                return False
-
-            item = lookup_response.json()
-            drive_id = item.get("parentReference", {}).get("driveId")
-            item_id = item.get("id")
-
-            if not drive_id or not item_id:
-                logger.warning(f"Invalid drive_id/item_id from: {item}")
-                return False
-
-            delete_url = f"{GRAPH_BASE}/drives/{drive_id}/items/{item_id}"
-            delete_response = await client.delete(delete_url, headers=HEADERS)
-
-            if delete_response.status_code == 204:
-                logger.info(f"Deleted file: {web_url}")
-                return True
-            else:
-                logger.warning(f"Delete failed for {web_url}, status: {delete_response.status_code}")
-                return False
-
-    except Exception as e:
-        logger.error(f"Delete error for {web_url}: {e}")
-        return False
-
 @app.post("/upload-data")
-async def upload_to_weaviate(req: UploadRequest):
+async def upload_to_weaviate(req: UploadRequest, authorization: str = Header(None)):
     try:
         client = weaviate.connect_to_weaviate_cloud(
             cluster_url=WEAVIATE_URL,
