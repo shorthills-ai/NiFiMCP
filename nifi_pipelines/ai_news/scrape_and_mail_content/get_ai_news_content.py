@@ -172,6 +172,16 @@ Shorthills AI
                     "emailAddress": {
                         "address": "ghayur@shorthills.ai"
                     }
+                },
+		{
+		    "emailAddress": {
+			"address": "shamshad@shorthills.ai"
+			}
+		},
+                {
+                    "emailAddress": {
+                        "address": "kapil.saxena@shorthills.ai"
+                        }
                 }
             ]
         }
