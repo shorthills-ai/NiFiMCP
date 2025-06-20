@@ -91,7 +91,7 @@ This method gives you full flexibility for development and testing.
 6. **Update ExecuteStreamCommand**
     1. **Change the Command Path to the full path of python inside your virtual environment**
 
-    2. **Change the Working Directory to where embeddings.py exists (e.g., ~/nifi2/users/Custom_processor/Chunking)**
+    2. **Change the Working Directory to where chunking.py exists (e.g., ~/nifi2/users/Custom_processor/Chunking)**
 7. **Rest the configuration of execute stream command and parameter context setup is same as in Method 1.**
 
     
