@@ -4,14 +4,17 @@ import json
 import sys
 import logging
 import warnings
-# from dotenv import load_dotenv
-# load_dotenv()
-from browser_use import Agent, Controller
+#from dotenv import load_dotenv
+#load_dotenv()
+from browser_use import BrowserSession, Agent, Controller
 from langchain_openai import AzureChatOpenAI
 from pydantic import BaseModel
 from typing import List
 from pydantic import SecretStr
+from pathlib import Path
+import uuid
 
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.CRITICAL)
@@ -83,20 +86,39 @@ Return your final output strictly in the following JSON format, with no extra te
 
 """
 
+
+
 async def main():
-    agent = Agent(
-        task=task,
-        llm=llm,
-        controller=controller,
-        # tool_calling_method='raw',
-        enable_memory=True,
+    browser_session = BrowserSession(
+        headless=True,
+        chromium_sandbox=False,
+        viewport={'width': 964, 'height': 647},
+        keep_alive=True,
+        user_data_dir='~/.config/browseruse/profiles/default',
     )
-    history = await agent.run()
-    result = history.final_result()
-    if result:
-        with open(f"ai_news.json", "w") as f:
-            f.write(result)
-    else:
-        sys.exit(1)
+
+    try:
+        await browser_session.start()
+
+        agent = Agent(
+            task=task,
+            llm=llm,
+            controller=controller,
+            enable_memory=True,
+            browser_session=browser_session
+        )
+
+        history = await agent.run()
+        result = history.final_result()
+
+        if result:
+            with open("ai_news.json", "w") as f:
+                f.write(result)
+        else:
+            raise Exception("No result returned from the agent.")
+
+    finally:
+        # This ensures browser session is always closed, even if there's an error
+        await browser_session.kill()
 
 asyncio.run(main())
