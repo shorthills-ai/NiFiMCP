@@ -45,7 +45,7 @@ You can run this chunking setup using either of the following methods:
 ### Steps:
 
 1. Open **Apache NiFi**.
-2. Upload the `.xml` template via **Upload Template**.
+2. Upload the `.json` template via **Upload Template**.
 3. Drag the template into the canvas.
 4. Update the **Command Path** to the full path of Python inside your virtual environment.
 5. Configure **Parameter Context** as shown below.
