@@ -1,5 +1,7 @@
 import os
 import sys
+import subprocess
+from pathlib import Path
 import json
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import AzureChatOpenAI
@@ -11,6 +13,14 @@ import datetime
 # Prepare today's date
 today_str = datetime.date.today().strftime("%B %d, %Y")
 
+base_dir = Path(__file__).resolve().parent
+scraper_path = base_dir / "scrape_news.py"
+json_path = base_dir / "ai_news.json"
+
+# Fetch recipients
+recipients = os.getenv('AI_NEWS_RECIPIENTS')
+recipients_data = json.loads(recipients)["toRecipients"]
+
 # Initialize LLM
 llm = AzureChatOpenAI(
         model="gpt-4o-mini",
@@ -18,6 +28,24 @@ llm = AzureChatOpenAI(
         azure_endpoint=os.getenv('AZURE_OPENAI_ENDPOINT', ''),
         api_key=SecretStr(os.getenv('AZURE_OPENAI_KEY', '')),
         )
+
+def run_scraper():
+    """
+    Runs the scrape_news.py script to generate the latest AI news JSON file.
+    If the script fails, prints an error message and exits the program.
+    """
+    try:
+        subprocess.run(
+            ["python3", str(scraper_path)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+    except subprocess.CalledProcessError as e:
+        sys.stderr.write("AI news not generated. scrape_news.py failed.\n")
+        sys.stderr.write(e.stderr or "")
+        sys.exit(1)
 
 def generate_ai_news_with_azure_openai(input_content):
     """
@@ -167,23 +195,7 @@ Shorthills AI
                 "contentType": "Text",
                 "content": email_body
             },
-            "toRecipients": [
-                {
-                    "emailAddress": {
-                        "address": "ghayur@shorthills.ai"
-                    }
-                },
-		{
-		    "emailAddress": {
-			"address": "shamshad@shorthills.ai"
-			}
-		},
-                {
-                    "emailAddress": {
-                        "address": "kapil.saxena@shorthills.ai"
-                        }
-                }
-            ]
+            "toRecipients": recipients_data
         }
     }
 
@@ -221,24 +233,28 @@ def extract_articles_with_sources(json_data):
 
 
 if __name__ == "__main__":
-    # Default output file from scrape_news.py
-    SCRAPED_JSON = f"ai_news.json"
+    run_scraper()
 
-    # If a file is provided as argument, use it; else, use default
+    # If override is passed, use that
     if len(sys.argv) == 2:
-        json_path = sys.argv[1]
-    else:
-        json_path = SCRAPED_JSON
+        json_path = Path(sys.argv[1])
 
-
-    with open(json_path, 'r', encoding='utf-8') as f:
-        json_data = json.load(f)
-    articles = extract_articles_with_sources(json_data)
-    if not articles:
-        print("No articles found in the provided JSON.")
+    if not json_path.exists():
+        sys.stderr.write(f"Expected news file not found at {json_path}\n")
         sys.exit(1)
 
-    # Prepare combined input for summary (with source info)
+    try:
+        with open(json_path, 'r', encoding='utf-8') as f:
+            json_data = json.load(f)
+    except Exception as e:
+        sys.stderr.write(f"Error reading or parsing JSON: {str(e)}\n")
+        sys.exit(1)
+
+    articles = extract_articles_with_sources(json_data)
+    if not articles:
+        sys.stderr.write("No articles found in the provided JSON.\n")
+        sys.exit(1)
+
     combined_input = "\n\n".join([
         f"Title: {a['title']}\nSource: {a['source_url']}\nContent: {a['content']}" for a in articles
     ])
