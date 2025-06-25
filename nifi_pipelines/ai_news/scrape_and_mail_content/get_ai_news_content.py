@@ -7,14 +7,14 @@ from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import AzureChatOpenAI
 from pydantic import SecretStr
 import datetime
-# from dotenv import load_dotenv
-# load_dotenv()
+from dotenv import load_dotenv
+load_dotenv()
 
 # Prepare today's date
 today_str = datetime.date.today().strftime("%B %d, %Y")
 
 base_dir = Path(__file__).resolve().parent
-scraper_path = base_dir / "scrape_news.py"
+scraper_path = base_dir / "scrape_news_v1.py"
 json_path = base_dir / "ai_news.json"
 
 # Fetch recipients
@@ -28,24 +28,6 @@ llm = AzureChatOpenAI(
         azure_endpoint=os.getenv('AZURE_OPENAI_ENDPOINT', ''),
         api_key=SecretStr(os.getenv('AZURE_OPENAI_KEY', '')),
         )
-
-def run_scraper():
-    """
-    Runs the scrape_news.py script to generate the latest AI news JSON file.
-    If the script fails, prints an error message and exits the program.
-    """
-    try:
-        subprocess.run(
-            ["python3", str(scraper_path)],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-    except subprocess.CalledProcessError as e:
-        sys.stderr.write("AI news not generated. scrape_news.py failed.\n")
-        sys.stderr.write(e.stderr or "")
-        sys.exit(1)
 
 def generate_ai_news_with_azure_openai(input_content):
     """
@@ -233,8 +215,6 @@ def extract_articles_with_sources(json_data):
 
 
 if __name__ == "__main__":
-    run_scraper()
-
     # If override is passed, use that
     if len(sys.argv) == 2:
         json_path = Path(sys.argv[1])
