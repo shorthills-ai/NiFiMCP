@@ -12,9 +12,9 @@ load_dotenv()
 
 # Prepare today's date
 today_str = datetime.date.today().strftime("%B %d, %Y")
+week_str = f"{ (datetime.date.today() - datetime.timedelta(days=7)).strftime("%B %d, %Y") } - {today_str }"
 
 base_dir = Path(__file__).resolve().parent
-scraper_path = base_dir / "scrape_news_v1.py"
 json_path = base_dir / "ai_news.json"
 
 # Fetch recipients
@@ -29,9 +29,41 @@ llm = AzureChatOpenAI(
         api_key=SecretStr(os.getenv('AZURE_OPENAI_KEY', '')),
         )
 
-def generate_ai_news_with_azure_openai(input_content):
+def get_news_highlights(json_path):
+    """Fetches AI news highlights from json file generated after scraping/searching for AI news."""
+    highlights = []
+    titles = []
+    try:
+        with open(json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return "Error: ai_news.json not found."
+    except json.JSONDecodeError:
+        return "Error: Could not decode ai_news.json."
+
+    if "articles" in data and isinstance(data["articles"], list):
+        for i, article in enumerate(data["articles"], 1):
+            title = article.get("title", "N/A")
+            summary = article.get("summary", "N/A")
+            source_url = article.get("source_url", "N/A")
+            
+            highlight_entry = f"{i}. {title}\n\n"
+            highlight_entry += f"➔ Summary: {summary}\n"
+            highlight_entry += f"➔ Source URL: {source_url}\n"
+            highlights.append(highlight_entry)
+            titles.append(title)
+            
+    if not highlights:
+        return "No articles found or articles are not in the expected format."
+    
+    highlights_joined = "\n\n".join(highlights)
+    titles_joined = "\n".join(titles)
+
+    return highlights_joined, titles_joined
+
+def extract_takeaways_and_topics(titles_combined):
     """
-    Generate an AI News Summary using Azure OpenAI.
+    Generate takeaways and topics using Azure OpenAI.
 
     Parameters:
         input_content (list): List of scraped content strings.
@@ -47,33 +79,13 @@ def generate_ai_news_with_azure_openai(input_content):
 
     # Build prompt
     prompt = f"""
-        You are an AI assistant tasked with creating an AI News Summary for employees.
+        You are an AI assistant tasked with extracting content for AI news. Create key takeaways and topics found in the input content.
 
         Here is the scraped content:
 
-        {input_content}
+        {titles_combined}
 
-        Follow this format:
-        🧠 AI News Summary 
-        Date: {today_str}
-
-
-        🌟 Top Highlights
-
-        1. Short headline 1
-
-        ➔ Summary: [2-3 sentence summary]  
-        ➔ Source Insight: [Key point or quote from the content if applicable]
-        ➔ Source URL: [URL of the source]
-
-        2. Short headline 2
-
-        ➔ Summary: [2-3 sentence summary]  
-        ➔ Source Insight: [Key point or quote from the content if applicable]
-        ➔ Source URL: [URL of the source]
-
-        (…continue up to 3-5 top highlights)
-
+        Follow this output format:
         
         ✏️ Key Takeaways
 
@@ -105,64 +117,27 @@ def generate_ai_news_with_azure_openai(input_content):
 
     return ai_news
 
-def generate_quiz(ai_summary):
-    """
-    Generates a quiz based on the AI news summary.
-    """
-    
-    prompt = f"""
-        I will provide you with a summarized content from news articles and blogs.
 
-        Your task is to create a quiz of 5 questions based on that content.
-
-        For each question:
-        - Provide 4 multiple-choice options (labeled A, B, C, D).
-        - Ensure only one correct answer (but do NOT reveal the answer).
-        - Make sure the quiz is clear and suitable for sending via email.
-
-        Format the quiz like this:
-
-        🕒🧪 Quick Quiz
-
-        1. [Question text]
-        A) [Option A]
-        B) [Option B]
-        C) [Option C]
-        D) [Option D]
-
-        At the end, add this instruction:
-        "Reply to this email with your answers in the format: 1A, 2B, 3C, 4D, 5A."
-
-        Here is the summarized content:
-        {ai_summary}"""
-    
-    messages = [
-                SystemMessage(
-                    content="You are an AI quiz generator."
-                ),
-                HumanMessage(content=prompt),
-            ]
-
-    response = llm.invoke(messages)
-
-    # Extract response
-    ai_quiz = response.content
-
-    return ai_quiz
-
-def generate_email_content(input_content):
+def generate_email_content(json_path):
     """
     Generates the email content with a summary of AI news.
     """
-    ai_summary = generate_ai_news_with_azure_openai(input_content)
-    ai_quiz = generate_quiz(ai_summary)
+    highlights_joined,titles_joined = get_news_highlights(json_path)
+    topic_takeaways = extract_takeaways_and_topics(titles_joined)
 
     email_body = f"""Hello all,
 If you want to stay updated with the world of AI, dive into below AI news summary and follow-up quiz.
 
-{ai_summary}
+        🧠 Weekly Digest
+        Date: {week_str}
 
-{ai_quiz}
+
+        🌟 Highlights
+
+        {highlights_joined}
+        
+        {topic_takeaways}
+
 
 Best regards,
 AI news
@@ -193,29 +168,8 @@ Shorthills AI
 # ******************************************************************************************
 
 
-def extract_articles_with_sources(json_data):
-    """
-    Given the loaded JSON data from scrape_news.py, extract a list of dicts with 'content' and 'source_url'.
-    Returns: List[{'content': ..., 'source_url': ..., 'title': ...}]
-    """
-    articles = []
-    if isinstance(json_data, dict) and "articles" in json_data:
-        for article in json_data["articles"]:
-            if (
-                isinstance(article, dict)
-                and "content" in article
-                and "source_url" in article
-            ):
-                articles.append({
-                    "content": article["content"],
-                    "source_url": article["source_url"],
-                    "title": article.get("title", "")
-                })
-    return articles
-
 
 if __name__ == "__main__":
-    # If override is passed, use that
     if len(sys.argv) == 2:
         json_path = Path(sys.argv[1])
 
@@ -230,14 +184,6 @@ if __name__ == "__main__":
         sys.stderr.write(f"Error reading or parsing JSON: {str(e)}\n")
         sys.exit(1)
 
-    articles = extract_articles_with_sources(json_data)
-    if not articles:
-        sys.stderr.write("No articles found in the provided JSON.\n")
-        sys.exit(1)
 
-    combined_input = "\n\n".join([
-        f"Title: {a['title']}\nSource: {a['source_url']}\nContent: {a['content']}" for a in articles
-    ])
-
-    email_body = generate_email_content(combined_input)
+    email_body = generate_email_content(json_path)
     print(email_body)
