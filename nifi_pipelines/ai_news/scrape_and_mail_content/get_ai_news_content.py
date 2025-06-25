@@ -1,6 +1,5 @@
 import os
 import sys
-import subprocess
 from pathlib import Path
 import json
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
@@ -85,23 +84,20 @@ def extract_takeaways_and_topics(titles_combined):
 
         {titles_combined}
 
+        Note: Provide a clear, concise, and structured output as per the format.
         Follow this output format:
-        
-        ✏️ Key Takeaways
 
-        - [Actionable takeaway or insight 1]  
-        - [Actionable takeaway or insight 2]  
-        - [Actionable takeaway or insight 3]
+✏️ Key Takeaways
+
+- [Actionable takeaway or insight 1]  
+- [Actionable takeaway or insight 2]  
+- [Actionable takeaway or insight 3]
 
 
-        🗂️ Topics Covered
+🗂️ Topics Covered
 
-        - [List of topics or keywords extracted from the input]
-
-        -----------------------------------------------------------------
-
-        Provide a clear, concise, and structured output as per the format.
-        """
+- [List of topics or keywords extracted from the input]
+"""
 
     messages = [
                 SystemMessage(
@@ -128,16 +124,18 @@ def generate_email_content(json_path):
     email_body = f"""Hello all,
 If you want to stay updated with the world of AI, dive into below AI news summary and follow-up quiz.
 
-        🧠 Weekly Digest
-        Date: {week_str}
+🧠 Weekly Digest
+Date: {week_str}
 
 
-        🌟 Highlights
+🌟 Highlights
 
-        {highlights_joined}
-        
-        {topic_takeaways}
+{highlights_joined}
 
+{topic_takeaways}
+
+
+-----------------------------------------------------------------
 
 Best regards,
 AI news
