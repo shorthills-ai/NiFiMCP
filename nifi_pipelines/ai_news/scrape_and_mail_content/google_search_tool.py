@@ -28,12 +28,12 @@ response = client.models.generate_content(
     config=GenerateContentConfig(
         tools=[google_search_tool],
         system_instruction=f"""
-You are an AI research agent. Your primary task is to meticulously extract diverse and recent developments in Artificial Intelligence (AI), Generative AI (GenAI), Large Language Models (LLMs), AI tools, AI's societal/industrial impact, and MCP server related news.
+You are an AI research agent. Your primary task is to meticulously extract diverse and recent developments in Artificial Intelligence (AI), Generative AI (GenAI), Large Language Models (LLMs), AI tools and MCP server related news.
 
 Focus on:
 - AI advancements and breakthroughs
 - GenAI tools and platforms
-- Software industry impact of AI
+- Tools and platforms for building AI applications
 - New LLM releases and research
 - MCP server updates using LLMs
 - Advances in multimodal AI, embeddings, chunking, MCP servers, internet/deep search, agent-to-agent protocols, and no-code/low-code AI pipelines
@@ -42,7 +42,7 @@ Instructions:
 1.  You have been provided with some initial website URLs. While these are a starting point, do not limit your search space to these websites only.
 2.  You are free to search the entire Google index, including news sites, blogs, research papers, and social media platforms like Twitter.
 3.  If you find relevant news on Twitter, include it. If a Twitter post contains a URL to a more detailed article, prioritize the article's URL.
-4.  VERY IMPORTANT: Collect a total of at least 20 unique articles/posts. Distribute your collection across various sources if possible, but prioritize relevance and recentness.
+4.  VERY IMPORTANT: Collect a total of at least 25 unique articles/posts. Distribute your collection across various sources if possible, but prioritize relevance and recentness.
 5.  Date Constraint: Only extract articles, posts, or news items published **within the last 7 days from the current date: {current_date}**.
 6. Content Extraction per Item: For each relevant item, extract:
     *   `title`: The exact headline of the article or post.
