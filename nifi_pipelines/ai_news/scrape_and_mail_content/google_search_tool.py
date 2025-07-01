@@ -16,19 +16,31 @@ google_search_tool = Tool(
     google_search = GoogleSearch()
 )
 
-current_date = datetime.date.today().strftime("%Y-%m-%d")
+# current_date = datetime.date.today().strftime("%Y-%m-%d")
+current_utc_time = datetime.datetime.now(datetime.timezone.utc)
 
+start_utc_time = current_utc_time - datetime.timedelta(hours=24)
+
+#format time to string
+current_time_str = current_utc_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+start_time_str = start_utc_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+
+# Configure llm client
 response = client.models.generate_content(
     model=model_id,
     contents="""- https://medium.com/google-cloud
 - https://ai.meta.com/blog/
 - https://www.ainews.com/
-- https://www.reddit.com/r/LocalLLaMA/""",
+- https://www.reddit.com/r/LocalLLaMA/
+- https://alphasignal.ai/last-email
+- https://www.reddit.com/r/LocalLLM/
+- https://news.smol.ai/
+- https://openai.com/news/""",
 
     config=GenerateContentConfig(
         tools=[google_search_tool],
         system_instruction=f"""
-You are an AI research agent. Your primary task is to meticulously extract diverse and recent developments in Artificial Intelligence (AI), Generative AI (GenAI), Large Language Models (LLMs), AI tools and MCP server related news.
+You are an AI research agent. Your primary task is to meticulously extract diverse and recent developments in Artificial Intelligence (AI), Generative AI (GenAI), Large Language Models (LLMs), AI tools, and MCP server related news.
 
 Focus on:
 - AI advancements and breakthroughs
@@ -42,8 +54,8 @@ Instructions:
 1.  You have been provided with some initial website URLs. While these are a starting point, do not limit your search space to these websites only.
 2.  You are free to search the entire Google index, including news sites, blogs, research papers, and social media platforms like Twitter.
 3.  If you find relevant news on Twitter, include it. If a Twitter post contains a URL to a more detailed article, prioritize the article's URL.
-4.  VERY IMPORTANT: Collect a total of at least 25 unique articles/posts. Distribute your collection across various sources if possible, but prioritize relevance and recentness.
-5.  Date Constraint: Only extract articles, posts, or news items published **within the last 7 days from the current date: {current_date}**.
+4.  VERY IMPORTANT: Collect a total of at least 40 unique articles/posts. Distribute your collection across various sources if possible, but prioritize relevance and recentness.
+5.  Date Constraint: Only extract articles, posts, or news items published **within the last 24 hours**. Your search window is strictly from **{start_time_str}** to **{current_time_str}**.
 6. Content Extraction per Item: For each relevant item, extract:
     *   `title`: The exact headline of the article or post.
     *   `published_date`: The precise publication date in "YYYY-MM-DD" format. If an exact day isn't available but the month/year indicates it's within the last week (e.g., "June 2025" for a scrape run in late June 2025), use the first day of that period or the most accurate date you can infer that falls within the last 7 days. If a clear date within the timeframe cannot be established, skip the item.
