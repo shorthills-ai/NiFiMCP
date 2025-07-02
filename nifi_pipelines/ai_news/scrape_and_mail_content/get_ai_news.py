@@ -283,7 +283,7 @@ def generate_email_content(json_path):
     # Construct the dict object
     email_message = {
         "message": {
-            "subject": "Weekly AI News & Quiz",
+            "subject": "Daily AI News",
             "body": {
                 "contentType": "HTML",
                 "content": email_body
