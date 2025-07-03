@@ -1035,7 +1035,7 @@
           "Store State": "Do not store state",
           "canonical-value-lookup-cache-size": "100",
           "Stateful Variables Initial Value": null,
-          "gemini.api.key": "AIzaSyB34jaO8_eMd0YS2IizlYh-oQG5uY1E_BI"
+          "gemini.api.key": ""
         },
         "propertyDescriptors": {
           "Delete Attributes Expression": {
