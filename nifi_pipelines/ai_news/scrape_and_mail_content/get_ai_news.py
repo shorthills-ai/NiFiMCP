@@ -15,6 +15,7 @@ week_str = f"{ (datetime.date.today() - datetime.timedelta(days=7)).strftime("%B
 
 base_dir = Path(__file__).resolve().parent
 json_path = base_dir / "ai_news.json"
+repo_json_path = base_dir / "trending_repos.json"
 
 # Fetch recipients
 recipients = os.getenv('AI_NEWS_RECIPIENTS')
@@ -156,7 +157,36 @@ Please provide the sorted and categorized list of highlights below. The final ou
     categorized_highlights = response.content   
     return categorized_highlights
 
-def generate_email_content(json_path):
+def get_trending_repositories(repo_json_path):
+    repositories = []
+    try:
+        with open(repo_json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return "Error: trending_repos.json not found."
+    except json.JSONDecodeError:
+        return "Error: Could not decode trending_repos.json."
+
+    if "repos" in data and isinstance(data["repos"], list):
+        for i, article in enumerate(data["repos"], 1):
+            repo_name = article.get("repo_name", "N/A")
+            description = article.get("description", "N/A")
+            source_url = article.get("repo_url", "N/A")
+            
+            repo_entry = f"<em>🔗{repo_name}</em><br>"
+            repo_entry += f"Description: {description}<br>"
+            repo_entry += f"Source: <a href={source_url}>{source_url}</a><br><br>"
+            repositories.append(repo_entry)
+
+            
+    if not repositories:
+        return "No trending repos found."
+    
+    repositories_joined = "\n\n".join(repositories)
+
+    return repositories_joined
+
+def generate_email_content(json_path,repo_json_path):
     """
     Generates the email content with a summary of AI news.
     """
@@ -165,26 +195,10 @@ def generate_email_content(json_path):
 
     categorized_highlights = sort_highlights(highlights_joined)
 
-#     email_body = f"""Hello all,
-# If you want to stay updated with the world of AI, dive into below AI news summary and follow-up quiz.
-
-# 🧠 Weekly Digest
-# Date: {week_str}
+    # get trending repositories
+    trending_repos = get_trending_repositories(repo_json_path)
 
 
-# 🌟 Highlights
-
-# {categorized_highlights}
-
-# {topic_takeaways}
-
-# -----------------------------------------------------------------
-
-
-# Best regards,
-# AI news
-# Shorthills AI
-# """
     email_body = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -270,6 +284,10 @@ def generate_email_content(json_path):
 
         {topic_takeaways}
 
+        <br><br>
+        <h2>📦 Trending repositories</h2>
+        {trending_repos}
+
         <div class="footer">
             Best regards,<br>
             AI news<br>
@@ -321,5 +339,5 @@ if __name__ == "__main__":
         sys.exit(1)
 
 
-    email_body = generate_email_content(json_path)
+    email_body = generate_email_content(json_path,repo_json_path)
     print(email_body)
