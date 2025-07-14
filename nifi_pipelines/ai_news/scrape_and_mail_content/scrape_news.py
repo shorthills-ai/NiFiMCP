@@ -1,75 +1,65 @@
-import asyncio
-import os
-import json
-import sys
-import logging
-import warnings
-#from dotenv import load_dotenv
-#load_dotenv()
-from browser_use import BrowserSession, Agent, Controller
 from langchain_openai import AzureChatOpenAI
-from pydantic import BaseModel
-from typing import List
+import json
+import os
+import sys
 from pydantic import SecretStr
-from pathlib import Path
-import uuid
+from dotenv import load_dotenv
+load_dotenv()
 
-os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
-
-warnings.filterwarnings("ignore")
-logging.basicConfig(level=logging.CRITICAL)
-for logger_name in logging.root.manager.loggerDict:
-    logging.getLogger(logger_name).setLevel(logging.CRITICAL)
-try:
-    import playwright
-    logging.getLogger("playwright").setLevel(logging.CRITICAL)
-except ImportError:
-    pass
-logging.getLogger("browser_use").setLevel(logging.CRITICAL)
-
-
-
-llm = AzureChatOpenAI(
+llm_model_instance = AzureChatOpenAI(
         model="gpt-4o-mini",
         api_version='2024-12-01-preview',
         azure_endpoint=os.getenv('AZURE_OPENAI_ENDPOINT', ''),
         api_key=SecretStr(os.getenv('AZURE_OPENAI_KEY', '')),
         )
 
-class Article(BaseModel):
-    title: str
-    content: str
-    source_url: str
-    published_date: str
+graph_config = {
+    "llm": {
+        "model_instance": llm_model_instance,
+        "model_tokens": 128000 
+    },
+   "verbose": False,
+   "headless": True,
+}
 
-class Articles(BaseModel):
-    articles: List[Article]
+from scrapegraphai.graphs import SearchGraph
 
-controller = Controller(output_model=Articles)
 
-task = """
-You are an AI research agent. Your task is to extract the latest developments in AI and generative AI (GenAI) from the following sources:
+prompt = """
+You are an AI research agent. Your primary task is to meticulously extract diverse and recent developments in Artificial Intelligence (AI), Generative AI (GenAI), Large Language Models (LLMs), AI tools, AI's societal/industrial impact, and MCP server related news from the specified sources.
 
+Sources to scrape:
 - https://medium.com/google-cloud
 - https://ai.meta.com/blog/
 - https://www.ainews.com/
-- https://www.reddit.com/r/LocalLLaMA/
+- https://www.reddit.com/r/LocalLLaMA/ (focus on posts announcing new models, tools, significant findings, or discussions around major AI news)
+- https://alphasignal.ai/last-email (if this is a newsletter, extract distinct news items or articles linked/summarized within)
+- https://www.deeplearning.ai/the-batch/
+- https://www.deeplearning.ai/the-batch/tag/letters/
 
-Instructions for each source:
-1. Navigate to the sources and the news articles or posts inside it which are published within the last 7 days.
-2. In total return at least 7 articles or posts, with a maximum of 10 articles or posts from all sources combined.
-3. For each relevant item, extract:
-   - `title`: The article or post headline.
-   - `published_date`: The exact date it was published.
-   - `content`: Descriptive and detailed content from the article or post.
-   - `source_url`: The direct URL to the article or post.
+VERY IMPORTANT: Collect a total of at least 15 unique articles/posts, with a maximum of 25, from all sources combined. Distribute your collection across the sources if possible, but prioritize relevance and recentness.
+
+Instructions for extraction:
+1.  Date Constraint: Only extract articles, posts, or news items published **within the last 7 days from the current date**.
+2.  Variety and Scope: Ensure a diverse range of topics. Prioritize news related to:
+    *   New AI model releases or significant updates (e.g., new LLMs, image/video generation models, open-source models).
+    *   Developments in AI tools and software (e.g., new libraries, development environments, AI-powered applications, software around generative AI).
+    *   News related to AI infrastructure, including MCP server (Model Context Protocol) developments or similar technologies enabling AI model interaction with data/tools.
+    *   The societal and industrial impact of AI (e.g., legal rulings like fair use, ethical discussions, major industry adoption news, copyright issues).
+    *   Significant research breakthroughs, new company initiatives in AI/GenAI, or updates on existing large language models.
+3.  Content Extraction per Item: For each relevant item, extract:
+    *   `title`: The exact headline of the article or post.
+    *   `published_date`: The precise publication date in "YYYY-MM-DD" format. If an exact day isn't available but the month/year indicates it's within the last week (e.g., "June 2025" for a scrape run in late June 2025), use the first day of that period or the most accurate date you can infer that falls within the last 7 days. If a clear date within the timeframe cannot be established, skip the item.
+    *   `content`: A descriptive and detailed summary of the key information, developments, insights, or announcements from the article or post. Capture the essence and important details that make it newsworthy in the context of AI advancements.
+    *   `source_url`: The direct permalink to the article or post.
 
 Constraints:
-- Skip any page that fails to load, takes too long, or has inaccessible elements.
-- Avoid content that violates Responsible AI policies (e.g., hate speech, misinformation, unethical AI use).
-- Do not hallucinate any content. Extract only what is verifiably on the page.
+-   If a page or source fails to load, takes an excessive amount of time, or presents inaccessible elements, skip it and move to the next.
+-   Strictly avoid content that infringes on Responsible AI guidelines (e.g., hate speech, misinformation, harmful content, unethical AI applications).
+-   Do not invent or hallucinate any information. All extracted data must be verifiably present on the source page.
+-   If a source like a Reddit thread or newsletter links to external original articles for its news items, prefer extracting information from those original articles if directly accessible and it meets the date criteria. If not, summarize from the provided source.
 
-Return your final output strictly in the following JSON format, with no extra text:
+Return your final output **strictly** in the following JSON format, with no introductory or concluding text outside the JSON structure:
 {
   "success": true,
   "data": {
@@ -83,42 +73,23 @@ Return your final output strictly in the following JSON format, with no extra te
     ]
   }
 }
-
 """
 
+smart_scraper_graph = SearchGraph(
+    prompt=prompt,
+    config=graph_config,
+)
 
+try:
+    result = smart_scraper_graph.run()
 
-async def main():
-    browser_session = BrowserSession(
-        headless=True,
-        chromium_sandbox=False,
-        viewport={'width': 964, 'height': 647},
-        keep_alive=True,
-        user_data_dir='~/.config/browseruse/profiles/default',
-    )
+    if result and isinstance(result, dict) and result.get("data") and isinstance(result["data"].get("articles"), list):
+        articles_data = result.get("data")
+        output_filename = "ai_news.json"
+        with open(output_filename, "w", encoding="utf-8") as f:
+            json.dump(articles_data, f, indent=2, ensure_ascii=False)
+    else:
+        sys.exit(1)
 
-    try:
-        await browser_session.start()
-
-        agent = Agent(
-            task=task,
-            llm=llm,
-            controller=controller,
-            enable_memory=True,
-            browser_session=browser_session
-        )
-
-        history = await agent.run()
-        result = history.final_result()
-
-        if result:
-            with open("ai_news.json", "w") as f:
-                f.write(result)
-        else:
-            raise Exception("No result returned from the agent.")
-
-    finally:
-        # This ensures browser session is always closed, even if there's an error
-        await browser_session.kill()
-
-asyncio.run(main())
+except Exception as e:
+    sys.exit(1)
