@@ -33,6 +33,7 @@ def get_news_highlights(json_path):
     """Fetches AI news highlights from json file generated after scraping/searching for AI news."""
     highlights = []
     titles = []
+    contents = []
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -46,20 +47,23 @@ def get_news_highlights(json_path):
             title = article.get("title", "N/A")
             summary = article.get("summary", "N/A")
             source_url = article.get("source_url", "N/A")
+            content = article.get("content", "N/A")
             
             highlight_entry = f"<em>🗞️{title}</em><br>"
             highlight_entry += f"➔ Summary: {summary}<br>"
             highlight_entry += f"➔ Source: <a href={source_url}>{source_url}</a><br><br>"
             highlights.append(highlight_entry)
             titles.append(title)
+            contents.append(content)
             
     if not highlights:
         return "No articles found or articles are not in the expected format."
     
     highlights_joined = "\n\n".join(highlights)
     titles_joined = "\n".join(titles)
+    contents_joined = "\n".join(contents)
 
-    return highlights_joined, titles_joined
+    return highlights_joined, titles_joined, contents_joined
 
 def extract_takeaways_and_topics(titles_combined):
     """
@@ -186,17 +190,57 @@ def get_trending_repositories(repo_json_path):
 
     return repositories_joined
 
+def generate_quiz(ai_summary):
+    """
+    Generates a quiz based on the AI news summary.
+    """
+    
+    prompt = f"""
+        I will provide you with a summarized content from news articles and blogs.
+        Your task is to create a quiz of 10 questions based on that content.
+        For each question:
+        - Provide 4 multiple-choice options (labeled A, B, C, D).
+        - Ensure only one correct answer (but do NOT reveal the answer).
+        - Make sure the quiz is clear and suitable for sending via email.
+        Format the quiz like this:
+  <h3>🕒🧪 Quick Quiz</h3>
+  <p><strong>1.</strong> [Question text]</p>
+  <ul style="list-style-type: none; padding-left: 0;">
+    <li>A)</strong> [Option A]</li>
+    <li>B)</strong> [Option B]</li>
+    <li>C)</strong> [Option C]</li>
+    <li>D)</strong> [Option D]</li>
+  </ul>
+        At the end, add this instruction:
+        "Reply to this email with your answers in the format: 1A, 2B, 3C, 4D, 5A."
+        Here is the summarized content:
+        {ai_summary}"""
+    
+    messages = [
+                SystemMessage(
+                    content="You are an AI quiz generator."
+                ),
+                HumanMessage(content=prompt),
+            ]
+    response = llm.invoke(messages)
+    # Extract response
+    ai_quiz = response.content
+    return ai_quiz
+
 def generate_email_content(json_path,repo_json_path):
     """
     Generates the email content with a summary of AI news.
     """
-    highlights_joined,titles_joined = get_news_highlights(json_path)
+    highlights_joined,titles_joined, contents_joined = get_news_highlights(json_path)
     topic_takeaways = extract_takeaways_and_topics(titles_joined)
 
     categorized_highlights = sort_highlights(highlights_joined)
 
     # get trending repositories
     trending_repos = get_trending_repositories(repo_json_path)
+
+    # get quiz
+    quiz = generate_quiz(contents_joined)
 
 
     email_body = f"""<!DOCTYPE html>
@@ -287,6 +331,10 @@ def generate_email_content(json_path,repo_json_path):
         <br><br>
         <h2>📦 Trending repositories</h2>
         {trending_repos}
+
+        <br><br>
+        <h2> Follow up Quiz</h2>
+        {quiz}
 
         <div class="footer">
             Best regards,<br>
