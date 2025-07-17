@@ -12,6 +12,8 @@ from google.genai.types import Tool, GenerateContentConfig, GoogleSearch
 from langchain_openai import AzureChatOpenAI
 from urllib.parse import urljoin
 import re
+from langchain_core.messages import SystemMessage, HumanMessage
+
 
 
 
@@ -442,12 +444,145 @@ def create_combined_output():
         json.dump(combined_output, f, ensure_ascii=False, indent=2)
 
 
+def clean_and_overwrite_articles(filepath: str):
+    """
+    Loads articles from a JSON file, cleans their content, and overwrites the file.
+    
+    Cleaning steps:
+    1. Removes patterns like "(Score: 123, Comments: 45): " from the start of content.
+    2. Removes any leading colons from the content.
+    """
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            original_articles = data.get("articles", [])
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        return False
+
+    # Regex to find "(Score: ..., Comments: ...):" at the start of the string
+    score_comment_pattern = re.compile(r'^\(Score: \d+,\s*Comments: \d+\):?\s*')
+    
+    cleaned_articles = []
+    for article in original_articles:
+        if 'content' in article and isinstance(article['content'], str):
+            content = article['content']
+            # Apply regex substitution to remove score/comment pattern
+            content = score_comment_pattern.sub('', content)
+            # Remove leading colon and any extra whitespace from the result
+            content = content.lstrip(':').strip()
+            # Update the article's content
+            article['content'] = content
+        cleaned_articles.append(article)
+
+    # Create the final JSON structure with cleaned articles
+    output_data = {"articles": cleaned_articles}
+
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, indent=2)
+        return True
+    except IOError as e:
+        return False
+
+
+def filter_ai_news_from_file(input_filepath: str):
+    """
+    Loads cleaned articles, deduplicates by title, filters them for a developer
+    audience using an LLM, and saves the result to a new JSON file.
+    """
+    output_filepath = "filtered_ai_news.json"
+
+    # --- Setup and Configuration ---
+    load_dotenv()
+
+    # Updated system prompt focusing on content and specific criteria
+    system_prompt = """
+You are an expert AI news curator for a highly technical audience of AI/ML developers, engineers, and researchers. Your primary task is to analyze the **article content** to make your decision.
+
+**KEEP articles if their content is about:**
+- New LLMs, foundational models, or significant model updates (e.g., new position on a leaderboard).
+- Technical discussions about AI, MCP, UTCP, or related infrastructure.
+- New or updated open-source AI tools, libraries, or evaluation frameworks like Graph RAG.
+- Practical evaluations or comparisons of generative AI tools.
+- Significant research breakthroughs with clear technical implications for developers.
+- Tools which can help in daily office work or tasks or can help technically.
+
+**DISCARD articles if their content is primarily about:**
+- Purely business news: funding rounds, investments, valuations, or company acquisitions.
+- General company announcements, marketing, or promotional content.
+- High-level 'AI in business' use cases without technical details.
+- AI policy, regulation discussions, or generic CEO interviews.
+- Announcements of training programs, cohorts, or educational courses.
+- Entertainment, memes, NSFW, or adult content.
+
+Your response MUST be a single word: either KEEP or DISCARD. Do not add any explanation or punctuation.
+"""
+
+    try:
+        llm = AzureChatOpenAI(
+            model="gpt-4o-mini",
+            api_version="2024-02-01",
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            api_key=SecretStr(os.getenv("AZURE_OPENAI_KEY")),
+            temperature=0,
+        )
+    except (KeyError, TypeError):
+        return
+
+    # --- Load and Deduplicate Articles by Title ---
+    try:
+        with open(input_filepath, "r", encoding="utf-8") as f:
+            all_articles = json.load(f).get("articles", [])
+    except (FileNotFoundError, json.JSONDecodeError):
+        return
+
+    unique_articles = []
+    seen_titles = set()
+    for article in all_articles:
+        title = article.get("title")
+        if title:
+            normalized_title = title.lower().strip()
+            if normalized_title and normalized_title not in seen_titles:
+                unique_articles.append(article)
+                seen_titles.add(normalized_title)
+
+
+    # --- Filter Articles with LLM ---
+    developer_focused_articles = []
+    for i, article in enumerate(unique_articles):
+        content = article.get("content", "")
+
+        # The LLM will now primarily judge based on the cleaned content
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"Content: {content}")
+        ]
+
+        try:
+            response = llm.invoke(messages)
+            decision = response.content.strip().upper()
+
+            if decision == "KEEP":
+                developer_focused_articles.append(article)
+        except Exception as e:
+            raise Exception(f"Filtering error: {e}")
+    # --- Save Filtered Articles to a New JSON File ---
+    
+    output_data = {"articles": developer_focused_articles}
+
+    try:
+        with open(output_filepath, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, indent=2)
+    except IOError as e:
+        raise IOError(f"Error writing to file {output_filepath}: {e}")
+
+
 def main():
     """
     Main function to run for AI news.
     """
     load_dotenv()
-    GITHUB_TRENDING_URL = "https://github.com/trending?spoken_language_code=en"
+    GITHUB_TRENDING_URL = "https://github.com/trending"
     REPO_OUTPUT_FILE = "trending_repos.json"
 
 
@@ -544,6 +679,17 @@ def main():
         
     relevant_repos = filter_repos_with_ai(llm,scraped_repos)
     save_to_json(relevant_repos, REPO_OUTPUT_FILE)
+
+    # Define the path to your single news file
+    news_json_file = "ai_news.json"
+    
+    # Check for required files before starting
+    if os.path.exists(news_json_file):
+        # Step 1: Clean the source file in place.
+        # The function returns False if it fails, so we can stop the process.
+        if clean_and_overwrite_articles(news_json_file):
+            # Step 2: Run the filtering process on the now-cleaned file.
+            filter_ai_news_from_file(news_json_file)
 
 
 if __name__ == "__main__":

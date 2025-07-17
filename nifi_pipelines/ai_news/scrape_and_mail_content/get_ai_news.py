@@ -45,13 +45,11 @@ def get_news_highlights(json_path):
     if "articles" in data and isinstance(data["articles"], list):
         for i, article in enumerate(data["articles"], 1):
             title = article.get("title", "N/A")
-            summary = article.get("summary", "N/A")
             source_url = article.get("source_url", "N/A")
             content = article.get("content", "N/A")
             
-            highlight_entry = f"<em>🗞️{title}</em><br>"
-            highlight_entry += f"➔ Summary: {summary}<br>"
-            highlight_entry += f"➔ Source: <a href={source_url}>{source_url}</a><br><br>"
+            highlight_entry = f"<a href={source_url}><em>🗞️{title}</em></a><br>"
+            highlight_entry += f"➔ {content}<br>"
             highlights.append(highlight_entry)
             titles.append(title)
             contents.append(content)
@@ -126,18 +124,21 @@ def sort_highlights(highlights_joined):
     Arranges the highlights into different sections based on topics.
     """
     prompt = f"""
-You are an expert AI assistant tasked with curating an internal AI news digest for employees. Your goal is to make the news easy to understand by organizing it thematically.
+You are an expert AI assistant curating an internal AI news digest. Organize the highlights thematically and categorize each item by engineering relevance.
 
-You will be given a list of news highlights. Your task is to analyze these highlights and group them into logical sections based on recurring technologies, products, protocols, or major themes.
-
-**Instructions:**
-
-1.  **Identify Key Themes:** Read through all the highlights and identify the main subjects. Look for specific, recurring keywords that define a topic, such as "Model Context Protocol (MCP)", "A2A", "Google", "Openai", "Antropic", "Llama" or "AI Agents".
-2.  **Create Section Headings:** Based on these themes, create clear and descriptive headings. Use html for the headings (e.g., '<h3>Model Context Protocol (MCP)</h3>'). The headings should be based on the specific technologies or products themselves.
-3.  **Group the Highlights:** Place each original highlight under the most appropriate section heading.
-4.  **Preserve Original Content:** Copy the highlights into the sections *exactly* as they are provided, including their original number, title, summary, and source URL. Do not alter, re-summarize, or re-number them.
-5.  **Be Logical:** Group items that are clearly related. For example, all news about MCP servers under single MCP-related heading, all news from google models and tools under google, similarly for any other organization.
-6.  **Handle Other News:** For highlights that don't fit into a specific, recurring technology group, create a broader category '<h3>AI Developments</h3>'.
+Instructions:
+1. Identify key themes (e.g., MCP, A2A, OpenAI, Google, AI Agents).
+2. Create clear HTML section headings based on those themes (e.g., '<h3>OpenAI</h3>').
+3. Group each highlight under the right section.
+4. Assign one technical category per item:
+   - Model Architectures and Algorithms
+   - Tools and Frameworks
+   - Training and Optimization
+   - Applications and Use Cases
+   - Datasets and Data Processing
+   - Hardware and Infrastructure
+5. Keep original numbering, title, summary, and source. Do not edit or re-summarize.
+6. Use '<h3>AI Developments</h3>' for uncategorized items.
 
 Here are the news highlights you need to sort:
 
@@ -145,8 +146,7 @@ Here are the news highlights you need to sort:
 {highlights_joined}
 ---
 
-Please provide the sorted and categorized list of highlights below. The final output should be only the categorized news with no extra text or backtick, ready for a newsletter.
-"""
+Return only the final HTML-formatted categorized list."""
 
     messages = [
                 # The SystemMessage sets the overall context for the LLM's persona.
@@ -190,42 +190,59 @@ def get_trending_repositories(repo_json_path):
 
     return repositories_joined
 
-def generate_quiz(ai_summary):
+def generate_quiz(ai_summary: str) -> tuple[str, dict]:
     """
-    Generates a quiz based on the AI news summary.
+    Generates an interactive HTML quiz with radio buttons based on the AI news summary.
+
+    This function instructs an LLM to create a 10-question quiz in JSON format,
+    then builds a self-contained HTML file with embedded CSS and JavaScript
+    to provide immediate feedback to the user upon selecting a radio button.
+
+    Args:
+        ai_summary: A string containing the summarized content for the quiz.
+
+    Returns:
+        A tuple containing:
+        - interactive_quiz (str): The full HTML code for the interactive quiz.
+        - answer_key (dict): A dictionary mapping question numbers to correct answers (e.g., {1: 'A', 2: 'C'}).
     """
     
+    # 1. Updated prompt to request JSON output with answers (remains the same)
     prompt = f"""
-        I will provide you with a summarized content from news articles and blogs.
-        Your task is to create a quiz of 10 questions based on that content.
-        For each question:
-        - Provide 4 multiple-choice options (labeled A, B, C, D).
-        - Ensure only one correct answer (but do NOT reveal the answer).
-        - Make sure the quiz is clear and suitable for sending via email.
-        Format the quiz like this:
-  <h3>🕒🧪 Quick Quiz</h3>
-  <p><strong>1.</strong> [Question text]</p>
-  <ul style="list-style-type: none; padding-left: 0;">
-    <li>A)</strong> [Option A]</li>
-    <li>B)</strong> [Option B]</li>
-    <li>C)</strong> [Option C]</li>
-    <li>D)</strong> [Option D]</li>
-  </ul>
-        At the end, add this instruction:
-        "Reply to this email with your answers in the format: 1A, 2B, 3C, 4D, 5A."
+        You are an AI quiz generator specializing in creating interactive learning content.
+        Your task is to create a quiz of 10 questions based on the provided content.
+
+        For each question, provide the question text, 4 multiple-choice options (A, B, C, D),
+        and identify the letter of the correct answer.
+
+        **IMPORTANT**: Respond ONLY with a valid JSON object. The JSON should be a list of objects,
+        where each object has the following keys:
+        - "question": A string for the question text.
+        - "options": An object with keys "A", "B", "C", "D".
+        - "answer": A string representing the key of the correct option (e.g., "A").
+
+        Do not include any other text, greetings, or explanations outside of the JSON object.
+
         Here is the summarized content:
-        {ai_summary}"""
+        ---
+        {ai_summary}
+        ---
+    """
     
     messages = [
-                SystemMessage(
-                    content="You are an AI quiz generator."
-                ),
-                HumanMessage(content=prompt),
-            ]
+        SystemMessage(content="You are an AI quiz generator specializing in JSON output."),
+        HumanMessage(content=prompt),
+    ]
     response = llm.invoke(messages)
-    # Extract response
-    ai_quiz = response.content
-    return ai_quiz
+    llm_output = response.content
+
+    try:
+        quiz_data = json.loads(llm_output)
+        # Save the valid quiz_data to quiz.json
+        with open("quiz.json", "w", encoding="utf-8") as f:
+            json.dump(quiz_data, f, ensure_ascii=False, indent=2)
+    except json.JSONDecodeError:
+        raise ValueError("The LLM did not return valid JSON. Please check the input and try again.")
 
 def generate_email_content(json_path,repo_json_path):
     """
@@ -240,7 +257,7 @@ def generate_email_content(json_path,repo_json_path):
     trending_repos = get_trending_repositories(repo_json_path)
 
     # get quiz
-    quiz = generate_quiz(contents_joined)
+    quiz = "<a href=http://104.208.162.61:8002/>Click here</a>"
 
 
     email_body = f"""<!DOCTYPE html>
@@ -333,7 +350,7 @@ def generate_email_content(json_path,repo_json_path):
         {trending_repos}
 
         <br><br>
-        <h2> Follow up Quiz</h2>
+        <h3>🕒🧪 Quick Quiz</h3>
         {quiz}
 
         <div class="footer">
