@@ -550,24 +550,23 @@ Your response MUST be a single word: either KEEP or DISCARD. Do not add any expl
     # --- Filter Articles with LLM ---
     developer_focused_articles = []
     for i, article in enumerate(unique_articles):
+        title = article.get("title", "No Title")
         content = article.get("content", "")
 
         # The LLM will now primarily judge based on the cleaned content
         messages = [
             SystemMessage(content=system_prompt),
-            HumanMessage(content=f"Content: {content}")
+            HumanMessage(content=f"Title: {title}\n\nContent: {content}")
         ]
 
         try:
             response = llm.invoke(messages)
             decision = response.content.strip().upper()
-
             if decision == "KEEP":
                 developer_focused_articles.append(article)
         except Exception as e:
             raise Exception(f"Filtering error: {e}")
     # --- Save Filtered Articles to a New JSON File ---
-    
     output_data = {"articles": developer_focused_articles}
 
     try:

@@ -14,7 +14,7 @@ today_str = datetime.date.today().strftime("%B %d, %Y")
 week_str = f"{ (datetime.date.today() - datetime.timedelta(days=7)).strftime("%B %d, %Y") } - {today_str }"
 
 base_dir = Path(__file__).resolve().parent
-json_path = base_dir / "ai_news.json"
+json_path = base_dir / "filtered_ai_news.json"
 repo_json_path = base_dir / "trending_repos.json"
 
 # Fetch recipients
@@ -38,9 +38,9 @@ def get_news_highlights(json_path):
         with open(json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
     except FileNotFoundError:
-        return "Error: ai_news.json not found."
+        return "Error: filtered_ai_news.json not found."
     except json.JSONDecodeError:
-        return "Error: Could not decode ai_news.json."
+        return "Error: Could not decode filtered_ai_news.json."
 
     if "articles" in data and isinstance(data["articles"], list):
         for i, article in enumerate(data["articles"], 1):
@@ -124,21 +124,16 @@ def sort_highlights(highlights_joined):
     Arranges the highlights into different sections based on topics.
     """
     prompt = f"""
-You are an expert AI assistant curating an internal AI news digest. Organize the highlights thematically and categorize each item by engineering relevance.
+You will be given a list of news highlights. Your task is to analyze these highlights and group them into logical sections based on recurring technologies, products, protocols, or major themes.
 
-Instructions:
-1. Identify key themes (e.g., MCP, A2A, OpenAI, Google, AI Agents).
-2. Create clear HTML section headings based on those themes (e.g., '<h3>OpenAI</h3>').
-3. Group each highlight under the right section.
-4. Assign one technical category per item:
-   - Model Architectures and Algorithms
-   - Tools and Frameworks
-   - Training and Optimization
-   - Applications and Use Cases
-   - Datasets and Data Processing
-   - Hardware and Infrastructure
-5. Keep original numbering, title, summary, and source. Do not edit or re-summarize.
-6. Use '<h3>AI Developments</h3>' for uncategorized items.
+**Instructions:**
+
+1.  **Identify Key Themes:** Read through all the highlights and identify the main subjects. Look for specific, recurring keywords that define a topic, from one of "Model Context Protocol (MCP)", "A2A", "Google", "Openai", "Antropic", "Llama" or "AI Agents", "AI Tools".
+2.  **Create Section Headings:** Based on these themes, create clear and descriptive headings. Use html for the headings (e.g., '<h3>Model Context Protocol (MCP)</h3>'). The headings should be based on the specific technologies or products themselves.
+3.  **Group the Highlights:** Place each original highlight under the most appropriate section heading.
+4.  **Preserve Original Content:** Copy the highlights into the sections *exactly* as they are provided, including the content, its style and structure. Do not alter, re-summarize, or number them.
+5.  **Be Logical:** Group items that are clearly related. For example, all news about MCP servers under single MCP-related heading, all news from google models and tools under google, similarly for any other organization.
+6.  **Handle Other News:** For highlights that don't fit into a specific, recurring technology group, create a broader category '<h3>AI Developments</h3>'.
 
 Here are the news highlights you need to sort:
 
@@ -146,7 +141,7 @@ Here are the news highlights you need to sort:
 {highlights_joined}
 ---
 
-Return only the final HTML-formatted categorized list."""
+Please provide the sorted and categorized list of highlights below. The final output should be only the categorized news with no extra text or backtick, ready for a newsletter"""
 
     messages = [
                 # The SystemMessage sets the overall context for the LLM's persona.
@@ -224,9 +219,31 @@ def generate_quiz(ai_summary: str) -> tuple[str, dict]:
         Do not include any other text, greetings, or explanations outside of the JSON object.
 
         Here is the summarized content:
-        ---
         {ai_summary}
-        ---
+
+        Example JSON output format:
+        [
+            {{
+                "question": "What is the capital of France?",
+                "options": {{
+                    "A": "Paris",
+                    "B": "London",
+                    "C": "Berlin",
+                    "D": "Madrid"
+                }},
+                "answer": "A"
+            }},
+            {{
+                "question": "What is the largest planet in our solar system?",
+                "options": {{
+                    "A": "Earth",
+                    "B": "Mars",
+                    "C": "Jupiter",
+                    "D": "Saturn"
+                }},
+                "answer": "C"
+            }}
+        ]
     """
     
     messages = [
@@ -235,9 +252,10 @@ def generate_quiz(ai_summary: str) -> tuple[str, dict]:
     ]
     response = llm.invoke(messages)
     llm_output = response.content
+    cleaned_output = llm_output.replace("```json", "").replace("```", "").strip()
 
     try:
-        quiz_data = json.loads(llm_output)
+        quiz_data = json.loads(cleaned_output)
         # Save the valid quiz_data to quiz.json
         with open("quiz.json", "w", encoding="utf-8") as f:
             json.dump(quiz_data, f, ensure_ascii=False, indent=2)
