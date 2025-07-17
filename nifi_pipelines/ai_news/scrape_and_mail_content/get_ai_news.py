@@ -256,7 +256,9 @@ def generate_email_content(json_path,repo_json_path):
     # get trending repositories
     trending_repos = get_trending_repositories(repo_json_path)
 
-    # get quiz
+    # generate quiz
+    generate_quiz(contents_joined)
+    # set quiz url
     quiz = "<a href=http://104.208.162.61:8002/>Click here</a>"
 
 
