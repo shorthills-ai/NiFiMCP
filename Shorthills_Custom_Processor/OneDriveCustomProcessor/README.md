@@ -17,12 +17,13 @@ This NiFi flow enables recursive listing of files from a OneDrive folder, then p
 
 This NiFi flow:
 1. Recursively Lists All Files from a OneDrive folder using Microsoft Graph API.
-2. Routes Files Based on **user action** (`view` or `download`) provided through parameters.
+2. Routes Files Based on **user action** (`view` or `download` or `both`) provided through parameters.
 3. Executes Action:
    - If `view`: shows metadata (name, size, type, web URL)
    - If `download`:
      - **To local**: Downloads to given directory path
      - **To onedrive**: Copies files to a target OneDrive folder
+   - If `both` : shows metadata as well as performs download operation
 
 ---
 
@@ -34,7 +35,7 @@ This NiFi flow:
 | `source_folder_id`| ID of the OneDrive folder to start from |
 | `source_drive_id`        | Drive ID of the source folder          |
 | `target`    | Target of the download action ( `local` to store on disk, `onedrive` to upload to another OneDrive folder) |
-| `action`   | Determines the flow path, Set `view` or `download` |
+| `action`   | Determines the flow path, Set `view` or `download` or `both` |
 |`target_drive_id`  | Drive ID where files should be uploaded  |
 |`target_folder_id` | Folder ID in the target drive |
 
