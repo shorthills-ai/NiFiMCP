@@ -8,3 +8,6 @@ httpx-aiohttp
 aiohttp
 python-docx
 python-pptx
+azure-storage-blob
+numpy
+
