@@ -81,7 +81,7 @@ def extract_takeaways_and_topics(titles_combined):
 
     # Build prompt
     prompt = f"""
-        You are an AI assistant tasked with extracting content for AI news. Create key takeaways and topics found in the input content.
+        You are an AI assistant tasked with extracting content for AI news. Create list of topics found in the input content.
 
         Here is the scraped content:
 
@@ -89,19 +89,9 @@ def extract_takeaways_and_topics(titles_combined):
 
         Note: Provide a clear, concise, and structured output as per the format.
         Follow this output format:
-
-<h2>✏️ Key Takeaways</h2>
-<p>
-<ul>
-<li> [Actionable takeaway or insight 1] </li>
-<li> [Actionable takeaway or insight 2] </li>
-<li> [Actionable takeaway or insight 3] </li>
-</ul>
-</p>
-
 <h2>🗂️ Topics Covered</h2>
 <p>
-<li>[List of topics or keywords extracted from the input]</li>
+"Set of topics covered in the news separated by commas."
 <p>
 """
 
