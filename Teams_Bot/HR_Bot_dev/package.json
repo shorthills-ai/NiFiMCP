@@ -24,7 +24,7 @@
         "@azure/identity": "^4.10.2",
         "@microsoft/agents-hosting": "^0.2.14",
         "axios": "^1.10.0",
-        "dotenv": "^17.1.0",
+        "dotenv": "^17.2.0",
         "express": "^5.0.1",
         "node-fetch": "^2.7.0"
     },

@@ -49,13 +49,9 @@ const server = expressApp.listen(port, () => {
 // Listen for incoming requests.
 expressApp.post("/api/messages", async (req, res) => {
   await adapter.process(req, res, async (context) => {
-  try {
     console.log('Processing activity:', context.activity);
     await teamsBot.run(context);
-  } catch (err) {
-    console.error("Unhandled exception in teamsBot.run:", err);
-    await context.sendActivity("⚠️ The bot hit an unexpected error while handling your message.");
-  }
+  });
 });
  
 // Gracefully shutdown HTTP server
@@ -64,5 +60,5 @@ expressApp.post("/api/messages", async (req, res) => {
     server.close();
   });
 });
-}
-);
+
+ 
