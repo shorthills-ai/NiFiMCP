@@ -16,6 +16,8 @@ def fetch_resume(identifier_type, identifier):
     """
     Fetches a resume from Elasticsearch based on the identifier type and value.
     """
+    cert_path=os.environ.get('CERT_PATH')
+# Elasticsearch connection details
     elastic_url = os.environ.get('ELASTIC_URL')
     api_key = os.environ.get("ELASTIC_API")
 
@@ -33,7 +35,7 @@ def fetch_resume(identifier_type, identifier):
     }
 
     try:
-        response = requests.post(elastic_url, headers=headers, json=query)
+        response = requests.post(elastic_url, headers=headers, json=query,verify=cert_path)
         response.raise_for_status()  # Raise an exception for bad status codes
         data = response.json()
         if "hits" in data and "hits" in data["hits"] and data["hits"]["hits"]:
