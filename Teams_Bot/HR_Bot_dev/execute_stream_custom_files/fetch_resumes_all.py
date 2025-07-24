@@ -14,6 +14,8 @@ load_dotenv()
 # Suppress SSL warnings
 warnings.simplefilter('ignore', InsecureRequestWarning)
 
+
+cert_path=os.environ.get('CERT_PATH')
 # Elasticsearch connection details
 elastic_url = os.environ.get('ELASTIC_URL')
 api_key = os.environ.get("ELASTIC_API")
@@ -44,7 +46,7 @@ headers = {
 
 # Fetch and enrich resumes
 try:
-    response = requests.post(elastic_url, headers=headers, json=query)
+    response = requests.post(elastic_url, headers=headers, json=query, verify=cert_path)
     response.raise_for_status()
 
     hits = response.json().get("hits", {}).get("hits", [])
