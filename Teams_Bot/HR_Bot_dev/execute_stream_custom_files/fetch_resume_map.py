@@ -3,6 +3,12 @@ import json
 import requests
 import warnings
 from urllib3.exceptions import InsecureRequestWarning
+from dotenv import load_dotenv
+import os
+
+# ✅ Load .env file from current directory
+load_dotenv()
+
 
 warnings.simplefilter('ignore', InsecureRequestWarning)
 
@@ -10,8 +16,8 @@ def fetch_resume(identifier_type, identifier):
     """
     Fetches a resume from Elasticsearch based on the identifier type and value.
     """
-    elastic_url = "https://172.200.58.63:9200/hrbot/_search"
-    api_key = ""
+    elastic_url = os.environ.get('ELASTIC_URL')
+    api_key = os.environ.get("ELASTIC_API")
 
     headers = {
         "Content-Type": "application/json",
@@ -27,7 +33,7 @@ def fetch_resume(identifier_type, identifier):
     }
 
     try:
-        response = requests.post(elastic_url, headers=headers, json=query, verify=False)
+        response = requests.post(elastic_url, headers=headers, json=query)
         response.raise_for_status()  # Raise an exception for bad status codes
         data = response.json()
         if "hits" in data and "hits" in data["hits"] and data["hits"]["hits"]:

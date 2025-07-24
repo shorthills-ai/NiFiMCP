@@ -3,10 +3,15 @@ import sys
 import json
 import os
 from openai import AzureOpenAI
+from dotenv import load_dotenv
+import os
+
+# ✅ Load .env file from current directory
+load_dotenv()
 
 class CandidateScorer:
     def __init__(self):
-        api_key = ""
+        api_key = os.environ.get('OPENAI_API_KEY')
         api_version = "2024-08-01-preview"
         azure_endpoint = "https://us-tax-law-rag-demo.openai.azure.com/"
         deployment_name = "gpt-4o-mini"
@@ -123,4 +128,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

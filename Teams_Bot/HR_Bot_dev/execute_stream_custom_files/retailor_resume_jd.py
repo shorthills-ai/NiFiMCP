@@ -9,6 +9,12 @@ import json
 from typing import List, Dict, Set, Tuple
 from openai import AzureOpenAI
 import difflib
+import string
+from dotenv import load_dotenv
+import os
+
+# ✅ Load .env file from current directory
+load_dotenv()
 
 
 class ResumeRetailorWithJD:
@@ -23,14 +29,17 @@ class ResumeRetailorWithJD:
                 - endpoint: Azure endpoint
                 - deployment: Model deployment name
         """
+        api_key = os.environ.get('OPENAI_API_KEY')
+        api_version = "2024-08-01-preview"
+        azure_endpoint = "https://us-tax-law-rag-demo.openai.azure.com/"
+        deployment_name = "gpt-4o-mini"
+
         self.client = AzureOpenAI(
-            api_key=azure_config["api_key"],
-            api_version=azure_config["api_version"],
-            azure_endpoint=azure_config["azure_endpoint"]
+            api_key=api_key,
+            api_version=api_version,
+            azure_endpoint=azure_endpoint
         )
-        
-        self.deployment_name = azure_config["deployment_name"]
-    
+        self.deployment_name = deployment_name
   
     def extract_all_projects(self, resume: Dict) -> list:
         """Extract ALL projects from both 'projects' and 'experience' sections."""
@@ -86,7 +95,6 @@ class ResumeRetailorWithJD:
     @staticmethod
     def _normalize_title(text):
         """Normalize text for strict comparison: lowercase, remove whitespace and punctuation."""
-        import string
         return ''.join(c for c in text.lower() if c not in string.whitespace + string.punctuation)
     
     def universal_enhance_project_title(self, project: Dict) -> str:
@@ -494,11 +502,11 @@ def main():
         return
 
     azure_config = {
-        "api_key": "",
-        "api_version": "2024-08-01-preview",
-        "azure_endpoint": "https://us-tax-law-rag-demo.openai.azure.com/",
-        "deployment_name": "gpt-4o-mini"
-    }
+            "api_key": os.environ.get('OPENAI_API_KEY'),
+            "api_version": "2024-02-01",
+            "endpoint": "https://resumeparser-dev.openai.azure.com/",
+            "deployment": "gpt4o-mini"
+        }
 
     retailor = ResumeRetailorWithJD(azure_config)
 
