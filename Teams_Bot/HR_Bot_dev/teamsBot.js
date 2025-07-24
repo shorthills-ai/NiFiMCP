@@ -1,3 +1,4 @@
+
 const axios = require("axios");
 const FormData = require("form-data");
 
@@ -18,9 +19,18 @@ const teamsBot = new AgentApplication({
   fileDownloaders: [downloader],
 });
 
+// ✅ Step 1: Load .env at the VERY top
+require('dotenv').config();
 
-const PRIMARY_NIFI_URL = "http://104.208.162.61:8083";
-const FALLBACK_NIFI_URL = "http://172.200.58.61:8083";
+// ✅ Step 2: Define variables AFTER dotenv is loaded
+const PRIMARY_NIFI_URL = process.env.PRIMARY_NIFI_URL;
+const FALLBACK_NIFI_URL = process.env.FALLBACK_NIFI_URL;
+
+// ✅ Step 3: Use them
+if (!PRIMARY_NIFI_URL || !FALLBACK_NIFI_URL) {
+  throw new Error("Missing NIFI URLs in environment variables");
+}
+
 /**
  * Axios wrapper with fallback
  * @param {'get'|'post'} method 
@@ -716,7 +726,7 @@ teamsBot.message("/makeresume", async (context, state) => {
       config: {
         responseType: "arraybuffer",
         headers: { "Content-Type": "application/json" },
-        timeout: 300000
+        timeout: 600000
       }
     });
 
@@ -883,7 +893,7 @@ teamsBot.message("/makeresume", async (context, state) => {
         data: payload,
         config: {
           headers: { "Content-Type": "application/json" },
-          timeout: 300000
+          timeout: 600000
         }
       });
 
@@ -1783,4 +1793,3 @@ teamsBot.activity(
 
 
 module.exports.teamsBot = teamsBot;
-

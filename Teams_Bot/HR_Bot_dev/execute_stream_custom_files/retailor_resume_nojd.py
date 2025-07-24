@@ -4,6 +4,11 @@ import random
 from typing import List, Dict, Set, Tuple
 from openai import AzureOpenAI
 import sys
+from dotenv import load_dotenv
+import os
+
+# ✅ Load .env file from current directory
+load_dotenv()
 
 class ResumeRetailorNoJD:
     def __init__(self, azure_config: Dict[str, str]):
@@ -17,17 +22,17 @@ class ResumeRetailorNoJD:
                 - endpoint: Azure endpoint
                 - deployment: Model deployment name
         """
-        # api_key = ""
-        # api_version = "2024-08-01-preview"
-        # azure_endpoint = "https://us-tax-law-rag-demo.openai.azure.com/"
-        # deployment_name = "gpt-4o-mini"
+        api_key = os.environ.get('OPENAI_API_KEY')
+        api_version = "2024-08-01-preview"
+        azure_endpoint = "https://us-tax-law-rag-demo.openai.azure.com/"
+        deployment_name = "gpt-4o-mini"
 
         self.client = AzureOpenAI(
-            api_key=azure_config["api_key"],
-            api_version=azure_config["api_version"],
-            azure_endpoint=azure_config["azure_endpoint"]
+            api_key=api_key,
+            api_version=api_version,
+            azure_endpoint=azure_endpoint
         )
-        self.deployment_name = azure_config["deployment_name"]
+        self.deployment_name = deployment_name
     
     def convert_objectid_to_str(self, obj):
         """Convert ObjectId to string for JSON serialization."""
@@ -280,7 +285,7 @@ def main():
     try:
         # Example Azure OpenAI configuration (replace with your actual credentials)
         azure_config = {
-            "api_key": "",
+            "api_key": os.environ.get('OPENAI_API_KEY'),
             "api_version": "2024-02-01",
             "endpoint": "https://resumeparser-dev.openai.azure.com/",
             "deployment": "gpt4o-mini"
@@ -288,10 +293,13 @@ def main():
         
         # Read resume data from stdin
         input_resume = json.load(sys.stdin)
+        
         # Initialize the retailor
         retailor = ResumeRetailorNoJD(azure_config)
+        
         # Retailor the resume
         retailored_resume = retailor.retailor_resume_no_jd(input_resume)
+        
         # Print the retailored resume to stdout
         print(json.dumps(retailored_resume, indent=2))
         
