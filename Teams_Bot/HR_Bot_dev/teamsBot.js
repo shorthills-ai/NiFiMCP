@@ -1,7 +1,6 @@
 const axios = require("axios");
 const FormData = require("form-data");
-const fs = require("fs");
-const path = require("path");
+
 
 const { ActivityTypes } = require("@microsoft/agents-activity");
 const {
@@ -12,7 +11,6 @@ const {
 const { version } = require("@microsoft/agents-hosting/package.json");
 
 const downloader = new AttachmentDownloader();
-
 // Define storage and application
 const storage = new MemoryStorage();
 const teamsBot = new AgentApplication({
@@ -20,48 +18,129 @@ const teamsBot = new AgentApplication({
   fileDownloaders: [downloader],
 });
 
+// ✅ Step 1: Load .env at the VERY top
+require('dotenv').config();
+
+// ✅ Step 2: Define variables AFTER dotenv is loaded
+const PRIMARY_NIFI_URL = process.env.PRIMARY_NIFI_URL;
+const FALLBACK_NIFI_URL = process.env.FALLBACK_NIFI_URL;
+
+// ✅ Step 3: Use them
+if (!PRIMARY_NIFI_URL || !FALLBACK_NIFI_URL) {
+  throw new Error("Missing NIFI URLs in environment variables");
+}
+
+/**
+ * Axios wrapper with fallback
+ * @param {'get'|'post'} method 
+ * @param {string} path 
+ * @param {object} options { data, config }
+ */
+async function axiosWithFallback(method, path, { data = {}, config = {} } = {}) {
+  const primaryUrl = `${PRIMARY_NIFI_URL}${path}`;
+  const fallbackUrl = `${FALLBACK_NIFI_URL}${path}`;
+  try {
+    return await axios({ method, url: primaryUrl, data, ...config });
+  } catch (primaryErr) {
+    console.warn(`[Primary Failed] ${method.toUpperCase()} ${primaryUrl}:`, primaryErr.message);
+    try {
+      return await axios({ method, url: fallbackUrl, data, ...config });
+    } catch (fallbackErr) {
+      console.error(`[Fallback Failed] ${method.toUpperCase()} ${fallbackUrl}:`, fallbackErr.message);
+      throw fallbackErr;
+    }
+  }
+}
+async function sendWelcomeCard(context) {
+  const card = {
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      {
+        type: "TextBlock",
+        text: "👋 Welcome to the HR Bot!",
+        size: "ExtraLarge",
+        weight: "Bolder",
+        color: "Accent",
+        horizontalAlignment: "center",
+        wrap: true
+      },
+      {
+        type: "TextBlock",
+        text: "Here are some things I can do for you:",
+        size: "Medium",
+        weight: "Bolder",
+        wrap: true,
+        spacing: "Medium"
+      },
+      {
+        type: "FactSet",
+        facts: [
+          { title: "/makeresume", value: "Generate a resume for a candidate (with or without job description)." },
+          { title: "/search", value: "Search for candidates by name, skill, or keyword." },
+          { title: "/view", value: "View a candidate's resume by employee ID or name." },
+          { title: "/delete", value: "Delete a candidate by employee ID or name." },
+          { title: "/uploadfolder", value: "Upload folder onedrive link containing resumes" },
+          { title: "/add", value: "Add a SharePoint resume link for a candidate." }
+        ]
+      },
+      {
+        type: "TextBlock",
+        text: "Quick Actions:",
+        size: "Medium",
+        weight: "Bolder",
+        spacing: "Large"
+      }
+      // Quick action buttons removed from Adaptive Card
+    ],
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
+  };
+
+  await context.sendActivity({
+    type: "message",
+    attachments: [
+      {
+        contentType: "application/vnd.microsoft.card.adaptive",
+        content: card
+      }
+    ]
+  });
+
+  // Send suggested actions (these fill the compose box, not send immediately)
+  await context.sendActivity({
+    type: "message",
+    text: "Here are some quick actions you can try:",
+    suggestedActions: {
+      actions: [
+        { type: "imBack", title: "/makeresume", value: "/makeresume" },
+        { type: "imBack", title: "/search", value: "/search" },
+        { type: "imBack", title: "/add", value: "/add" },
+        { type: "imBack", title: "/view", value: "/view" },
+        { type: "imBack", title: "/delete", value: "/delete" },
+        { type: "imBack", title: "/uploadfolder", value: "/uploadfolder" },
+        { type: "imBack", title: "/help", value: "/help" }
+      ],
+      to: [context.activity.from.id]
+    }
+  });
+}
 // Listen for user to say '/reset' and then delete conversation state
 teamsBot.message("/reset", async (context, state) => {
   state.deleteConversationState();
   await context.sendActivity("Ok I've deleted the current conversation state.");
 });
 
-teamsBot.message("/count", async (context, state) => {
-  const count = state.conversation.count ?? 0;
-  await context.sendActivity(`The count is ${count}`);
-});
-
-teamsBot.message("/diag", async (context, state) => {
-  await state.load(context, storage);
-  await context.sendActivity(JSON.stringify(context.activity));
-});
-
-teamsBot.message("/state", async (context, state) => {
-  await state.load(context, storage);
-  await context.sendActivity(JSON.stringify(state));
-});
-
-teamsBot.message("/runtime", async (context, state) => {
-  const runtime = {
-    nodeversion: process.version,
-    sdkversion: version,
-  };
-  await context.sendActivity(JSON.stringify(runtime));
-});
-
 // Test command to check environment and connectivity
 teamsBot.message("/test", async (context, state) => {
   try {
     // Test basic connectivity
-    const testResponse = await axios.get("http://104.208.162.61:8083/", {
-      timeout: 5000
+    const testResponse = await axiosWithFallback("get", "/", {
+      config: { timeout: 5000 }
     });
-    
     await context.sendActivity(`✅ NIFI processor is reachable. Status: ${testResponse.status}`);
   } catch (err) {
     await context.sendActivity(`❌ NIFI processor connectivity test failed: ${err.message}`);
   }
-  
   // Test Graph API connectivity
   try {
     const graphToken = await getGraphToken();
@@ -74,36 +153,17 @@ teamsBot.message("/test", async (context, state) => {
 
 async function sendCandidateCards(results, context) {
   const topResults = results.slice(0, 20);
- 
-  for (const r of topResults) {
-    const rawText = r.text || "";
-    let name = r.name || "";
-    let empId = r.employee_id || r.filename?.replace(".txt", "") || "";
-    let summary = r.summary || "";
-    let phone = r.phone || "";
-    let email = r.email || "";
 
-    // Fallback extraction from rawText if fields are missing
-    if (!name) {
-      const nameMatch = rawText.match(/name\s*=\s*([^,}]+)/i);
-      if (nameMatch) name = nameMatch[1].trim();
-    }
-    if (!empId) {
-      const idMatch = rawText.match(/employee_id\s*=\s*([^,}]+)/i);
-      if (idMatch) empId = idMatch[1].trim();
-    }
-    if (!summary) {
-      const summaryMatch = rawText.match(/summary\s*=\s*([^,}]+)/i);
-      if (summaryMatch) summary = summaryMatch[1].trim();
-    }
-    if (!phone) {
-      const phoneMatch = rawText.match(/phone\s*=\s*([^,}]+)/i);
-      if (phoneMatch) phone = phoneMatch[1].trim();
-    }
-    if (!email) {
-      const emailMatch = rawText.match(/email\s*=\s*([^,}]+)/i);
-      if (emailMatch) email = emailMatch[1].trim();
-    }
+  for (const candidate of topResults) {
+    const name = candidate.name || "Unknown Candidate";
+    const empId = candidate.employee_id || "N/A";
+    const rawScore = typeof candidate.score === 'number' ? candidate.score : 0;
+    const score = (rawScore * 100).toFixed(2); // e.g., 94.56
+
+    // 🎨 Score color logic
+    let scoreColor = "Good"; // green
+    if (rawScore < 0.7) scoreColor = "Attention"; // red
+    else if (rawScore < 0.9) scoreColor = "Warning"; // yellow
 
     const card = {
       type: "AdaptiveCard",
@@ -113,29 +173,21 @@ async function sendCandidateCards(results, context) {
           type: "TextBlock",
           size: "Large",
           weight: "Bolder",
-          text: `👤 ${name || "Unknown"}`
+          text: `👤 ${name}`
         },
         {
           type: "TextBlock",
-          text: `🆔 Employee ID: ${empId || "N/A"}`,
+          text: `🆔 Employee ID: ${empId}`,
           wrap: true
         },
-        summary && {
+        {
           type: "TextBlock",
-          text: `📝 Summary: ${summary}`,
-          wrap: true
-        },
-        phone && {
-          type: "TextBlock",
-          text: `📞 Phone: ${phone}`,
-          wrap: true
-        },
-        email && {
-          type: "TextBlock",
-          text: `📧 Email: ${email}`,
-          wrap: true
+          text: `⭐ Score: ${score}%`,
+          wrap: true,
+          color: scoreColor,
+          weight: "Bolder"
         }
-      ].filter(Boolean),
+      ],
       actions: [
         {
           type: "Action.Submit",
@@ -143,14 +195,14 @@ async function sendCandidateCards(results, context) {
           data: {
             msteams: {
               type: "messageBack",
-              text: empId ? `/view ${empId}` : `/view ${name}`
+              text: `/view ${empId}`
             }
           }
         }
       ],
       $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
     };
- 
+
     await context.sendActivity({
       type: "message",
       attachments: [
@@ -163,144 +215,45 @@ async function sendCandidateCards(results, context) {
   }
 }
 
- 
-// --- Main Feature: /search_candidates ---
-teamsBot.message(/^\/search_candidates\s+(.*)/i, async (context, state) => {
-  const query = context.activity.text.replace(/^\/search_candidates\s+/i, "").trim();
- 
-  if (!query) {
-    await context.sendActivity("❗ Please provide a query after `/search_candidates`.");
-    return;
-  }
- 
-  await context.sendActivity('🔍 Searching candidates...');
-  await context.sendActivity('📊 Evaluating and scoring candidates...');
- 
-  try {
-    const response = await axios.post("http://104.208.162.61:8083/search_candidates", {
-      query
-    }, {
-      headers: { "Content-Type": "application/json" },
-      timeout: 30000
-    });
- 
-    const result = response.data;
- 
-    if (!result || !result.results || result.results.length === 0) {
-      await context.sendActivity("⚠️ No candidates found.");
-      return;
-    }
- 
-    // Sort by score descending if available
-    const topResults = result.results
-      .slice(0, 20)
-      .sort((a, b) => (b.score || 0) - (a.score || 0));
 
-    await context.sendActivity(`✅ Found ${topResults.length} candidates:`);
- 
-    for (const r of topResults) {
-      // Try to extract fields for the card
-      let name = r.name || "Unknown";
-      let empId = r.employee_id || (r.filename ? r.filename.replace(".txt", "") : "N/A");
-      let score = r.score ?? "N/A";
-      let summary = r.summary || r.text || "(No summary provided)";
-      let keywords = r.keywords || [];
-      let reason = r.reason || "";
-
-      // Use the same card layout as displayResumeCard for consistency
-      const cardBody = [
-          {
-            type: "TextBlock",
-            size: "Large",
-            weight: "Bolder",
-            text: `👤 ${name}`
-          },
-          {
-            type: "TextBlock",
-            text: `🆔 Employee ID: ${empId}`,
-            wrap: true
-          },
-          {
-            type: "TextBlock",
-          text: `📊 Score: ${score}`,
-            wrap: true
-          },
-        reason && {
-            type: "TextBlock",
-          text: `📝 Reason: ${reason}`,
-          wrap: true
-        },
-        keywords.length > 0 && {
-          type: "TextBlock",
-          text: `🔑 Keywords: ${keywords.join(", ")}`,
-          wrap: true
-        },
-        summary && {
-          type: "TextBlock",
-          text: `📝 Summary: ${summary}`,
-            wrap: true
-          }
-      ].filter(Boolean);
-
-      const card = {
-        type: "AdaptiveCard",
-        version: "1.4",
-        body: cardBody,
-        $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
-      };
- 
-      await context.sendActivity({
-        type: "message",
-        attachments: [
-          {
-            contentType: "application/vnd.microsoft.card.adaptive",
-            content: card
-          }
-        ]
-      });
-    }
- 
-  } catch (error) {
-    const errMsg = error.response?.data || error.message;
-    await context.sendActivity(`❌ Search Candidates Error:\n\`\`\`${errMsg}\`\`\``);
-  }
+teamsBot.message(/^(hi|hello|hey|\/help)$/i, async (context, state) => {
+  await sendWelcomeCard(context);
 });
-   
 
-// --- /search and /skills Command (merged) ---
-teamsBot.message(/^\/(search|skills)\s+(.*)/i, async (context, state) => {
-  const match = context.activity.text.match(/^\/(search|skills)\s+(.*)/i);
-  const command = match[1];
-  const query = match[2].trim();
+// --- /search Command ---
+teamsBot.message(/^\/search\s+(.*)/i, async (context, state) => {
+  const query = context.activity.text.replace(/^\/search\s+/i, "").trim();
 
   if (!query) {
-    await context.sendActivity(`❗ Please provide a query after "/${command}".`);
+    await context.sendActivity("❗ Please provide a query after `/search`.");
     return;
   }
 
-  const endpoint = command === "skills" ? "skills" : "search";
   try {
-    const response = await axios.post(`http://104.208.162.61:8083/${endpoint}`, {
-      query
-    }, {
-      headers: { "Content-Type": "application/json" },
-      timeout: 10000
+    const response = await axiosWithFallback("post", "/search", {
+      data: { query },
+      config: {
+        headers: { "Content-Type": "application/json" },
+        timeout: 60000
+      }
     });
 
     const result = response.data;
 
-    if (!result || !result.results || result.results.length === 0) {
-      await context.sendActivity("⚠️ No candidates found.");
-      return;
-    }
-
-    await sendCandidateCards(result.results, context);
+    // if (!result || !result.results || result.results.length === 0) {
+    //   await context.sendActivity("⚠️ No candidates found.");
+    //   return;
+    // }
+    console.log("🔍 Found candidates:", result.length);
+    await sendCandidateCards(result, context);
 
   } catch (error) {
     const errMsg = error.response?.data || error.message;
-    await context.sendActivity(`❌ ${command.charAt(0).toUpperCase() + command.slice(1)} Search Error:\n\`\`\`${errMsg}\`\`\``);
+    await context.sendActivity(`❌ Search Candidates Error:\n\
+\  ${errMsg}\  `);
   }
 });
+
 
 // Helper function to display resume card
 async function displayResumeCard(context, fallbackData) {
@@ -618,6 +571,8 @@ async function displayResumeCard(context, fallbackData) {
 
 const { getGraphToken } = require("./utils/graphToken");
 teamsBot.message("/makeresume", async (context, state) => {
+
+
   const text = context.activity.text || "";
   const args = text.replace(/^\/makeresume\s*/i, "").trim();
 
@@ -647,7 +602,7 @@ teamsBot.message("/makeresume", async (context, state) => {
 
   // If nothing is provided, prompt user
   if (!identifier_type && !job_description) {
-    await context.sendActivity("Please provide at least an identifier (name/employee_id) or a job description after jd.\nExample: /makeresume name Kushagra Wadhwa jd \"Job description\" or /makeresume jd \"Job description only\"");
+    await context.sendActivity("Please provide at least an identifier (name/employee_id) or a job description after jd.\nExample: /makeresume John Doe jd \"Job description\" or /makeresume jd \"Job description only\"");
     return;
   }
 
@@ -663,7 +618,7 @@ teamsBot.message("/makeresume", async (context, state) => {
 
   // Ensure we have at least one identifier or job description
   if (!payload.identifier_type && !payload.job_description) {
-    await context.sendActivity("❗ Please provide at least an identifier (name/employee_id) or a job description.\nExample: `/makeresume name Kushagra Wadhwa` or `/makeresume jd \"Software Engineer\"`");
+    await context.sendActivity("❗ Please provide at least an identifier (name/employee_id) or a job description.\nExample: `/makeresume John Dow` or `/makeresume jd \"Software Engineer\"`");
     return;
   }
 
@@ -671,20 +626,27 @@ teamsBot.message("/makeresume", async (context, state) => {
     // User-friendly loader for single-candidate or JD flow
     if (identifier_type && identifier && job_description) {
       await context.sendActivity('🔍 Looking for candidate...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
       await context.sendActivity('🛠️ Retailoring resume for the job description...');
+      await new Promise(resolve => setTimeout(resolve, 3000));
       await context.sendActivity('⏳ Generating tailored resume...');
     } else if (identifier_type && identifier) {
       await context.sendActivity('🔍 Looking for candidate...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
       await context.sendActivity('⏳ Generating resume...');
     } else if (job_description && !identifier_type) {
       await context.sendActivity('🔍 Searching candidates...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
       await context.sendActivity('📊 Evaluating and scoring candidates...');
     }
     // First, try to get binary response from NIFI processor
-    const response = await axios.post("http://104.208.162.61:8083/makeresume", payload, {
-      responseType: "arraybuffer",
-      headers: { "Content-Type": "application/json" },
-      timeout: 600000 // 10 minutes
+    const response = await axiosWithFallback("post", "/makeresume", {
+      data: payload,
+      config: {
+        responseType: "arraybuffer",
+        headers: { "Content-Type": "application/json" },
+        timeout: 600000
+      }
     });
 
     // Extract JSON resume data from headers
@@ -770,7 +732,7 @@ teamsBot.message("/makeresume", async (context, state) => {
         }
       ]
     });
-          await context.sendActivity('✅ Resume generated and uploaded!');
+          await context.sendActivity('✅ Resume generated!');
           if (resumeJsonData) {
             await context.sendActivity(`📋 Backup JSON Data: Available (${Object.keys(resumeJsonData).length} fields)`);
           }
@@ -846,9 +808,12 @@ teamsBot.message("/makeresume", async (context, state) => {
 
     try {
       // Attempt to get JSON response instead of binary
-      const jsonResponse = await axios.post("http://104.208.162.61:8083/makeresume", payload, {
-        headers: { "Content-Type": "application/json" },
-        timeout: 600000 // 10 minutes
+      const jsonResponse = await axiosWithFallback("post", "/makeresume", {
+        data: payload,
+        config: {
+          headers: { "Content-Type": "application/json" },
+          timeout: 600000
+        }
       });
 
       if (jsonResponse.data && typeof jsonResponse.data === "object") {
@@ -865,9 +830,12 @@ teamsBot.message("/makeresume", async (context, state) => {
           job_description: payload.job_description
         };
         
-        const altResponse = await axios.post("http://104.208.162.61:8083/makeresume", altPayload, {
-          headers: { "Content-Type": "application/json" },
-          timeout: 600000 // 10 minutes
+        const jsonResponse = await axiosWithFallback("post", "/makeresume", {
+          data: payload,
+          config: {
+            headers: { "Content-Type": "application/json" },
+            timeout: 600000
+          }
         });
         
         if (altResponse.data && typeof altResponse.data === "object") {
@@ -896,6 +864,7 @@ teamsBot.message("/makeresume", async (context, state) => {
     if (fallbackData && typeof fallbackData === "object") {
       if (!identifier_type && Array.isArray(fallbackData)) {
         await context.sendActivity('🔍 Searching candidates...');
+        await new Promise(resolve => setTimeout(resolve, 2000));
         await context.sendActivity('📊 Evaluating and scoring candidates...');
         // Only show candidates with score > 70
         const filteredCandidates = fallbackData.filter(c => (c.score || 0) > 70);
@@ -922,329 +891,44 @@ teamsBot.message("/makeresume", async (context, state) => {
       }
     } else {
       // Final fallback - show error message
-      await context.sendActivity(`❌ **FINAL RESULT:** Resume generation failed`);
-      await context.sendActivity(`📊 **Error Details:** \`${fallbackText}\``);
-      if (identifier_type && identifier) {
-        await context.sendActivity('Attempting to fetch candidate profile as fallback...');
-        await fetchAndDisplayViewCard(context, identifier_type, identifier);
-      }
+      await context.sendActivity({
+        type: "message",
+        attachments: [
+          {
+            contentType: "application/vnd.microsoft.card.adaptive",
+            content: {
+              type: "AdaptiveCard",
+              version: "1.4",
+              body: [
+                {
+                  type: "TextBlock",
+                  text: "❌ Resume Generation Failed",
+                  size: "Large",
+                  weight: "Bolder",
+                  color: "Attention",
+                  wrap: true
+                },
+                {
+                  type: "TextBlock",
+                  text: fallbackText,
+                  wrap: true
+                },
+                {
+                  type: "TextBlock",
+                  text: "Please verify the candidate information or try again later.",
+                  wrap: true,
+                  spacing: "Small"
+                }
+              ],
+              $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
+            }
+          }
+        ]
+      });
     }
   }
+
 });
-
-// Helper function to display resume card
-async function displayResumeCard(context, fallbackData) {
-  // Build card body with sections
-  const cardBody = [];
-  
-  // Header section
-  cardBody.push({
-    type: "Container",
-    style: "emphasis",
-    bleed: true,
-    items: [
-      {
-        type: "TextBlock",
-        size: "ExtraLarge",
-        weight: "Bolder",
-        text: fallbackData.name || "Resume Data",
-        color: "Warning",
-        horizontalAlignment: "center"
-      }
-      // Removed warning text here
-    ]
-  });
-
-  // Contact Information Section
-  const contactItems = [];
-  if (fallbackData.title) {
-    contactItems.push({
-      type: "TextBlock",
-      text: fallbackData.title,
-      size: "Medium",
-      weight: "Bolder",
-      color: "Accent"
-    });
-  }
-  if (fallbackData.email) {
-    contactItems.push({
-              type: "TextBlock",
-      text: `📧 ${fallbackData.email}`,
-              wrap: true
-    });
-  }
-  if (fallbackData.phone) {
-    contactItems.push({
-              type: "TextBlock",
-      text: `📞 ${fallbackData.phone}`,
-              wrap: true
-    });
-  }
-  if (fallbackData.location) {
-    contactItems.push({
-              type: "TextBlock",
-      text: `📍 ${fallbackData.location}`,
-              wrap: true
-    });
-  }
-  
-  if (contactItems.length > 0) {
-    cardBody.push({
-      type: "Container",
-      items: [
-        {
-          type: "TextBlock",
-          text: "📋 CONTACT INFORMATION",
-          size: "Medium",
-          weight: "Bolder",
-          color: "Accent",
-          spacing: "Medium"
-        },
-        ...contactItems
-      ]
-    });
-  }
-
-  // Summary Section
-  if (fallbackData.summary) {
-    cardBody.push({
-      type: "Container",
-      items: [
-        {
-          type: "TextBlock",
-          text: "📝 PROFESSIONAL SUMMARY",
-          size: "Medium",
-          weight: "Bolder",
-          color: "Accent",
-          spacing: "Medium"
-        },
-        {
-          type: "TextBlock",
-          text: fallbackData.summary,
-          wrap: true,
-          spacing: "Small"
-        }
-      ]
-    });
-  }
-
-  // Skills Section
-  if (fallbackData.skills?.length) {
-    cardBody.push({
-      type: "Container",
-      items: [
-        {
-          type: "TextBlock",
-          text: "💡 TECHNICAL SKILLS",
-          size: "Medium",
-          weight: "Bolder",
-          color: "Accent",
-          spacing: "Medium"
-        },
-        {
-          type: "TextBlock",
-          text: fallbackData.skills.join(" • "),
-          wrap: true,
-          spacing: "Small"
-        }
-      ]
-    });
-  }
-
-  // Experience Section
-  if (fallbackData.experience?.length) {
-    const experienceItems = fallbackData.experience.map(exp => ({
-      type: "Container",
-      items: [
-        {
-          type: "TextBlock",
-          text: `🔹 ${exp.title}`,
-          weight: "Bolder",
-          size: "Medium"
-        },
-        {
-          type: "TextBlock",
-          text: `${exp.company} • ${exp.duration}${exp.location ? ` • ${exp.location}` : ""}`,
-          isSubtle: true,
-          size: "Small"
-        },
-        {
-          type: "TextBlock",
-          text: exp.description,
-          wrap: true,
-          spacing: "Small"
-        }
-      ],
-      spacing: "Medium"
-    }));
-
-    cardBody.push({
-      type: "Container",
-      items: [
-        {
-          type: "TextBlock",
-          text: "💼 WORK EXPERIENCE",
-          size: "Medium",
-          weight: "Bolder",
-          color: "Accent",
-          spacing: "Medium"
-        },
-        ...experienceItems
-      ]
-    });
-  }
-
-  // Education Section
-  if (fallbackData.education?.length) {
-    const educationItems = fallbackData.education.map(edu => ({
-      type: "Container",
-      items: [
-        {
-          type: "TextBlock",
-          text: `🎓 ${edu.degree}`,
-          weight: "Bolder",
-          size: "Medium"
-        },
-        {
-          type: "TextBlock",
-          text: `${edu.institution} • ${edu.year}`,
-          isSubtle: true,
-          size: "Small"
-        }
-      ],
-      spacing: "Small"
-    }));
-
-    cardBody.push({
-      type: "Container",
-      items: [
-        {
-          type: "TextBlock",
-          text: "🎓 EDUCATION",
-          size: "Medium",
-          weight: "Bolder",
-          color: "Accent",
-          spacing: "Medium"
-        },
-        ...educationItems
-      ]
-    });
-  }
-
-  // Projects Section
-  if (fallbackData.projects?.length) {
-    const projectItems = fallbackData.projects.map(project => ({
-      type: "Container",
-      items: [
-        {
-          type: "TextBlock",
-          text: `🚀 ${project.title}`,
-          weight: "Bolder",
-          size: "Medium"
-        },
-        {
-          type: "TextBlock",
-          text: project.description,
-          wrap: true,
-          spacing: "Small"
-        }
-      ],
-      spacing: "Medium"
-    }));
-
-    cardBody.push({
-      type: "Container",
-      items: [
-        {
-          type: "TextBlock",
-          text: "🚀 PROJECTS",
-          size: "Medium",
-          weight: "Bolder",
-          color: "Accent",
-          spacing: "Medium"
-        },
-        ...projectItems
-      ]
-    });
-  }
-
-  // Certifications Section
-  if (fallbackData.certifications?.length) {
-    const certificationItems = fallbackData.certifications.map(cert => ({
-      type: "Container",
-      items: [
-        {
-          type: "TextBlock",
-          text: `📜 ${cert.title}`,
-          weight: "Bolder",
-          size: "Medium"
-        },
-        {
-          type: "TextBlock",
-          text: `${cert.issuer ? cert.issuer : ""}${cert.year ? ` • ${cert.year}` : ""}`,
-          isSubtle: true,
-          size: "Small"
-        }
-      ],
-      spacing: "Small"
-    }));
-
-    cardBody.push({
-      type: "Container",
-      items: [
-        {
-          type: "TextBlock",
-          text: "📜 CERTIFICATIONS",
-          size: "Medium",
-          weight: "Bolder",
-          color: "Accent",
-          spacing: "Medium"
-        },
-        ...certificationItems
-      ]
-    });
-  }
-
-  // Social Profiles Section
-  if (fallbackData.social_profiles?.length) {
-    cardBody.push({
-      type: "Container",
-      items: [
-        {
-          type: "TextBlock",
-          text: "🌐 SOCIAL PROFILES",
-          size: "Medium",
-          weight: "Bolder",
-          color: "Accent",
-          spacing: "Medium"
-        },
-        {
-              type: "TextBlock",
-          text: fallbackData.social_profiles.map(profile => `${profile.platform}: ${profile.link}`).join(" • "),
-          wrap: true,
-          spacing: "Small"
-        }
-      ]
-    });
-  }
-
-  const card = {
-    type: "AdaptiveCard",
-    version: "1.4",
-    body: cardBody,
-          $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
-        };
-
-        await context.sendActivity({
-          type: "message",
-          attachments: [
-            {
-              contentType: "application/vnd.microsoft.card.adaptive",
-              content: card
-            }
-          ]
-        });
-  }
 
 // Helper: Send a simple candidate card for JD-only /makeresume
 async function sendSimpleCandidateCard(context, candidate, jobDescription) {
@@ -1306,6 +990,7 @@ async function sendSimpleCandidateCard(context, candidate, jobDescription) {
 
 // Enhanced /view command: supports employee ID or name
 teamsBot.message(/^\/view(?:\s+(.*))?$/i, async (context, state) => {
+
   const text = context.activity.text;
   const args = text.replace(/^\/view\s*/i, "").trim();
 
@@ -1338,21 +1023,20 @@ teamsBot.message(/^\/view(?:\s+(.*))?$/i, async (context, state) => {
   try {
     await context.sendActivity({ type: 'typing' });
     await context.sendActivity('🔍 Looking for candidate...');
-    const nifiViewUrl = "http://104.208.162.61:8083/view";
     // Build payload exactly like /makeresume
-    const payload = {};
-    if (identifier_type && identifier) {
-      payload.identifier_type = identifier_type;
-      payload.identifier = identifier;
-    }
+    const payload = { identifier_type, identifier };
     if (!payload.identifier_type || !payload.identifier) {
       await context.sendActivity("❗ Please provide a valid employee ID or name after `/view`.");
       return;
     }
-    const response = await axios.post(nifiViewUrl, payload, {
-      headers: { "Content-Type": "application/json" },
-      timeout: 20000, // 20 seconds for testing
+    const response = await axiosWithFallback("post", "/view", {
+      data: payload,
+      config: {
+        headers: { "Content-Type": "application/json" },
+        timeout: 20000
+      }
     });
+    
 
     let resumeData = response.data;
     if (typeof resumeData === "string") {
@@ -1376,263 +1060,527 @@ teamsBot.message(/^\/view(?:\s+(.*))?$/i, async (context, state) => {
     if (typeof errMsg === "object") {
       errMsg = JSON.stringify(errMsg, null, 2);
     }
-    await context.sendActivity(`❌ Error while searching for candidate \`${identifier}\`:\n\n\`${errMsg}\``);
-  }
-});
-
-
-// Enhanced /delete command: supports employee ID or name
-teamsBot.message(/^\/delete(?:\s+(.*))?$/i, async (context, state) => {
-  const text = context.activity.text;
-  const args = text.replace(/^\/delete\s*/i, "").trim();
- 
-  let employeeId = "";
- 
-  if (!args) {
-    await context.sendActivity("❗ Please provide an employee ID after `/delete`.\nExample:\n- `/delete 12345`");
-    return;
-  }
- 
-  // Only allow numeric employee ID
-  if (/^\d+$/.test(args)) {
-    employeeId = args;
-  } else {
-    await context.sendActivity("❗ Please provide a valid numeric employee ID after `/delete`.\nExample:\n- `/delete 12345`");
-    return;
-  }
- 
-  try {
-    const nifiDeleteUrl = "http://104.208.162.61:8083/delete";
-    const response = await axios.post(nifiDeleteUrl, {
-      employee_id: employeeId
-    }, {
-      headers: { "Content-Type": "application/json" },
-      timeout: 10000,
-    });
-
-    let nifiResp = response.data?.nifi_response || response.data || "No response";
-    let parsedResp;
-    try {
-      parsedResp = typeof nifiResp === 'string' ? JSON.parse(nifiResp) : nifiResp;
-    } catch {
-      parsedResp = nifiResp;
-    }
-
-    if (parsedResp && parsedResp.status === "success") {
-      await context.sendActivity(`🗑️ Candidate with employee ID \`${employeeId}\` has been deleted successfully.`);
-    } else {
-      await context.sendActivity(`❌ Failed to delete candidate.`);
-    }
-  } catch (err) {
-    await context.sendActivity(`❌ Failed to delete candidate.`);
-  }
-});
- 
-
-teamsBot.message("/upload", async (context, state) => {
-  state.conversation.awaitingUpload = true;
-  state.conversation.awaitingEmployeeId = true;
-  state.conversation.uploadData = {};
-  await context.sendActivity("Please enter the employee ID for the file you want to upload. (Employee ID is compulsory to add the resume.)\n\nType `exit` anytime to cancel the upload process.");
-});
-// Handle file uploads and upload workflow - MUST BE BEFORE ECHO HANDLER
-teamsBot.activity(ActivityTypes.Message, async (context, state) => {
-  const attachments = context.activity.attachments;
-  const messageText = context.activity.text?.trim() || "";
- 
-  // Skip processing if this is a command (starts with /)
-  if (messageText.startsWith('/')) {
-    return; // Let other handlers process commands
-  }
- 
-  // Allow user to exit upload flow at any step
-  if (
-    (state.conversation.awaitingUpload || state.conversation.awaitingEmployeeId || state.conversation.awaitingConfirmation)
-    && /^exit$/i.test(messageText)
-  ) {
-    await context.sendActivity("Upload process cancelled. If you want to upload again, type /upload.");
-    resetUploadState(state);
-    return;
-  }
- 
-  // Step 1: Get employee_id from user
-  if (state.conversation.awaitingEmployeeId && state.conversation.awaitingUpload) {
-    if (messageText) {
-      state.conversation.uploadData.employee_id = messageText;
-      state.conversation.awaitingEmployeeId = false;
-      await context.sendActivity("Now, please upload a PDF, DOC, or DOCX file for this employee.");
-      return;
-    } else {
-      await context.sendActivity("❗ Employee ID is compulsory. Please enter a valid employee ID.");
-      return;
-    }
-  }
- 
-  // Step 2: If awaiting upload and a supported file is attached
-  if (state.conversation.awaitingUpload && !state.conversation.awaitingEmployeeId && attachments && attachments.length > 0) {
-    const attachment = attachments[0];
-    const supportedTypes = [
-      "application/pdf",
-      "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    ];
-    if (supportedTypes.includes(attachment.contentType)) {
-      state.conversation.awaitingConfirmation = true;
-      state.conversation.pendingAttachment = attachment;
-      state.conversation.awaitingUpload = false;
-      await context.sendActivity(`You uploaded **${attachment.name || "a file"}** for employee ID **${state.conversation.uploadData.employee_id}**. Do you want to send it to NiFi? (yes/no)\n\nType \`exit\` to cancel.`);
-      return;
-    } else {
-      await context.sendActivity("Only PDF, DOC, or DOCX files are supported. Please upload a valid file or type `exit` to cancel.");
-      return;
-    }
-  }
- 
-  // Step 3: If user is confirming upload
-  if (state.conversation.awaitingConfirmation && /^(yes|y)$/i.test(messageText)) {
-    const attachment = state.conversation.pendingAttachment;
-    const employeeId = state.conversation.uploadData?.employee_id;
-    if (attachment && employeeId) {
-      try {
-        const pdfUrl = attachment.contentUrl;
-        const nifiEndpoint = "http://104.208.162.61:8083/upload";
-        const nifiPayload = { pdf_url: pdfUrl, employee_id: employeeId };
-        const nifiResponse = await axios.post(nifiEndpoint, nifiPayload, {
-          headers: { "Content-Type": "application/json" },
-        });
-        await context.sendActivity("✅ File uploaded to elastic database successfully.");
-      } catch (error) {
-        await context.sendActivity("❌ Sorry, NIFI cluster is down please try again later. Please try again later.");
-      }
-    } else {
-      await context.sendActivity("❗ Missing file or employee ID. Please try /upload again.");
-    }
-    resetUploadState(state);
-    return;
-  }
- 
-  // Step 4: If user cancels
-  if (state.conversation.awaitingConfirmation && /^(no|n)$/i.test(messageText)) {
-    await context.sendActivity("Upload cancelled. If you want to upload again, type /upload.");
-    resetUploadState(state);
-    return;
-  }
- 
-  // If we reach here and there's text, it's a regular message (not a command)
-  if (messageText) {
-    // Show fallback card (same as welcome card, but with a different header)
-    const card = {
-      type: "AdaptiveCard",
-      version: "1.4",
-      body: [
-        {
-          type: "TextBlock",
-          text: "❓ Sorry, I couldn't understand your message.",
-          size: "ExtraLarge",
-          weight: "Bolder",
-          color: "Attention",
-          horizontalAlignment: "center",
-          wrap: true
-        },
-        {
-          type: "TextBlock",
-          text: "Please use one of the available commands below:",
-          size: "Medium",
-          weight: "Bolder",
-          wrap: true,
-          spacing: "Medium"
-        },
-        {
-          type: "FactSet",
-          facts: [
-            { title: "/makeresume", value: "Generate a resume for a candidate (with or without job description)." },
-            { title: "/search", value: "Search for candidates by name, skill, or keyword." },
-            { title: "/skills", value: "Find candidates by specific skill(s)." },
-            { title: "/view", value: "View a candidate's resume by employee ID or name." },
-            { title: "/delete", value: "Delete a candidate by employee ID or name." },
-            { title: "/upload", value: "Upload a PDF, DOC, or DOCX resume for a candidate." }
-          ]
-        },
-        {
-          type: "TextBlock",
-          text: "Quick Actions:",
-          size: "Medium",
-          weight: "Bolder",
-          spacing: "Large"
-        }
-      ],
-      actions: [
-        {
-          type: "Action.Submit",
-          title: "/makeresume",
-          data: { msteams: { type: "messageBack", text: "/makeresume" } }
-        },
-        {
-          type: "Action.Submit",
-          title: "/search",
-          data: { msteams: { type: "messageBack", text: "/search" } }
-        },
-        {
-          type: "Action.Submit",
-          title: "/skills",
-          data: { msteams: { type: "messageBack", text: "/skills" } }
-        },
-        {
-          type: "Action.Submit",
-          title: "/view",
-          data: { msteams: { type: "messageBack", text: "/view" } }
-        },
-        {
-          type: "Action.Submit",
-          title: "/delete",
-          data: { msteams: { type: "messageBack", text: "/delete" } }
-        },
-        {
-          type: "Action.Submit",
-          title: "/upload",
-          data: { msteams: { type: "messageBack", text: "/upload" } }
-        }
-      ],
-      $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
-    };
-
     await context.sendActivity({
       type: "message",
       attachments: [
         {
           contentType: "application/vnd.microsoft.card.adaptive",
-          content: card
+          content: {
+            type: "AdaptiveCard",
+            version: "1.4",
+            body: [
+              {
+                type: "TextBlock",
+                text: `❌ Candidate Lookup Failed`,
+                size: "Large",
+                weight: "Bolder",
+                color: "Attention",
+                wrap: true
+              },
+              {
+                type: "TextBlock",
+                text: errMsg || "Unknown error",
+                wrap: true
+              },
+              {
+                type: "TextBlock",
+                text: "Please check the employee ID or name and try again.",
+                wrap: true,
+                spacing: "Small"
+              }
+            ],
+            $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
+          }
         }
       ]
     });
   }
+
 });
- 
-// Add this helper function before your teamsBot.activity handlers
-function resetUploadState(state) {
-  state.conversation.awaitingUpload = false;
-  state.conversation.awaitingEmployeeId = false;
-  state.conversation.awaitingConfirmation = false;
-  state.conversation.pendingAttachment = null;
-  state.conversation.uploadData = {};
+
+
+
+
+// Enhanced /delete command: supports employee ID or name
+teamsBot.message(/^\/delete(?:\s+(.*))?$/i, async (context, state) => {
+  const args = context.activity.text.replace(/^\/delete\s*/i, "").trim();
+
+  let employeeId = "";
+  let name = "";
+
+  const nameMatch = args.match(/name\s+([^\d][^\n\r]*)/i);
+  if (nameMatch) {
+    name = nameMatch[1].trim();
+    const idMatch = args.match(/(^|\s)(\d+)(\s|$)/);
+    if (idMatch) {
+      employeeId = idMatch[2].trim();
+    }
+  } else {
+    if (/^\d+$/.test(args)) {
+      employeeId = args;
+    } else {
+      name = args;
+    }
+  }
+
+  if (!employeeId && !name) {
+    await context.sendActivity("❗ Usage: `/delete <employee_id>` or `/delete name John Doe`");
+    return;
+  }
+
+  try {
+    const payload = { employee_id: employeeId, name };
+    const response = await axiosWithFallback("post", "/delete", {
+      data: payload,
+      config: { headers: { "Content-Type": "application/json" }, timeout: 60000 }
+    });
+
+    const result = response.data;
+    if (result?.status === "success") {
+      await context.sendActivity(`✅ Candidate deleted successfully.`);
+    } else {
+      await context.sendActivity(`⚠️ No candidate deleted.}`);
+    }
+  } catch (err) {
+    await context.sendActivity(`❌ Failed to delete candidate: ${err.message}`);
+  }
+});
+
+
+
+teamsBot.message("/add", async (context, state) => {
+   
+  // Show spinner card
+  await context.sendActivity({
+    type: "message",
+    attachments: [
+      {
+        contentType: "application/vnd.microsoft.card.adaptive",
+        content: {
+          type: "AdaptiveCard",
+          version: "1.4",
+          body: [
+            {
+              type: "TextBlock",
+              text: "⏳ Processing your request, please wait...",
+              size: "Medium",
+              weight: "Bolder",
+              color: "Accent",
+              wrap: true
+            }
+          ],
+          $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
+        }
+      }
+    ]
+  });
+  const parts = context.activity.text.trim().split(" ");
+  const employeeId = parts[1];
+
+  if (!employeeId) {
+    await context.sendActivity("How to use?: `/add <employee_id>`");
+    return;
+  }
+
+  state.conversation.awaitingLink = true;
+  state.conversation.addEmployeeId = employeeId;
+  await context.sendActivity(`Please enter the SharePoint resume link for employee ID *${employeeId}*.`);
+
+});
+
+teamsBot.message(/^\/uploadfolder(\s|$)/, async (context, state) => {
+   
+  console.log("[BOT] /uploadfolder triggered:", context.activity.text);
+
+  const parts = context.activity.text.trim().split(" ");
+  const folderLink = parts[1];
+
+  if (!folderLink || !folderLink.startsWith("http") || !folderLink.includes("sharepoint.com")) {
+    await context.sendActivity({
+      type: "message",
+      attachments: [{
+        contentType: "application/vnd.microsoft.card.adaptive",
+        content: {
+          type: "AdaptiveCard",
+          version: "1.4",
+          body: [
+            {
+              type: "TextBlock",
+              text: "⚠️ Invalid or missing SharePoint folder link.",
+              wrap: true,
+              color: "Warning"
+            },
+            {
+              type: "TextBlock",
+              text: "**Usage:** `/uploadfolder <sharepoint_folder_link>`\n\nMake sure the folder contains resumes named like `employee_id.pdf`.",
+              wrap: true
+            }
+          ],
+          $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
+        }
+      }]
+    });
+    return;
+  }
+
+  await context.sendActivity({
+    type: "message",
+    attachments: [{
+      contentType: "application/vnd.microsoft.card.adaptive",
+      content: {
+        type: "AdaptiveCard",
+        version: "1.4",
+        body: [
+          {
+            type: "TextBlock",
+            text: "📂 Uploading resumes from the SharePoint folder. Please wait...",
+            size: "Large",
+            weight: "Bolder",
+            color: "Accent",
+            wrap: true
+          }
+        ],
+        $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
+      }
+    }]
+  });
+
+  try {
+    const response = await axiosWithFallback("post", "/bulk", {
+      data: { folder_link: folderLink },
+      config: {
+        headers: { "Content-Type": "application/json" }
+      }
+    });
+    const processedCount = response.data.processed ?? "All";
+
+    await context.sendActivity({
+      type: "message",
+      attachments: [{
+        contentType: "application/vnd.microsoft.card.adaptive",
+        content: {
+          type: "AdaptiveCard",
+          version: "1.4",
+          body: [
+            {
+              type: "TextBlock",
+              text: "✅ Bulk Upload Completed",
+              size: "ExtraLarge",
+              weight: "Bolder",
+              color: "Good",
+              wrap: true
+            },
+            {
+              type: "TextBlock",
+              text: `${processedCount} resumes were successfully processed from the SharePoint folder.`,
+              wrap: true
+            }
+          ],
+          $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
+        }
+      }]
+    });
+
+  } catch (error) {
+    console.error("Upload folder error:", error.message);
+
+    await context.sendActivity({
+      type: "message",
+      attachments: [{
+        contentType: "application/vnd.microsoft.card.adaptive",
+        content: {
+          type: "AdaptiveCard",
+          version: "1.4",
+          body: [
+            {
+              type: "TextBlock",
+              text: "❌ Upload Failed",
+              size: "Large",
+              weight: "Bolder",
+              color: "Attention",
+              wrap: true
+            },
+            {
+              type: "TextBlock",
+              text: error.message || "Unknown error occurred while uploading folder.",
+              wrap: true
+            }
+          ],
+          $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
+        }
+      }]
+    });
+  }
+
+});
+
+async function sendUnknownMessageWithCommands(context) {
+  const card = {
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      {
+        type: "TextBlock",
+        text: "❓ Sorry, I couldn't understand your message.",
+        size: "Large",
+        weight: "Bolder",
+        color: "Attention",
+        wrap: true
+      },
+      {
+        type: "TextBlock",
+        text: "Please choose one of the available commands below:",
+        size: "Medium",
+        weight: "Bolder",
+        wrap: true,
+        spacing: "Medium"
+      },
+      {
+        type: "FactSet",
+        facts: [
+          { title: "/makeresume", value: "Generate a resume for a candidate (with or without job description)." },
+          { title: "/search", value: "Search for candidates using a query" },
+          { title: "/view", value: "View a candidate's resume by employee ID or name." },
+          { title: "/delete", value: "Delete a candidate by employee ID or name." },
+          { title: "/uploadfolder", value: "Upload onedrive folder containing resumes" },
+          { title: "/add", value: "Add a SharePoint resume link for a candidate." }
+        ]
+      },
+      {
+        type: "TextBlock",
+        text: "Quick Actions:",
+        size: "Medium",
+        weight: "Bolder",
+        spacing: "Large"
+      }
+    ],
+    actions: [
+      {
+        type: "Action.Submit",
+        title: "/makeresume",
+        data: { msteams: { type: "messageBack", text: "/makeresume", displayText: "/makeresume" } }
+      },
+      {
+        type: "Action.Submit",
+        title: "/search",
+        data: { msteams: { type: "messageBack", text: "/search", displayText: "/search"  } }
+      },
+      {
+        type: "Action.Submit",
+        title: "/view",
+        data: { msteams: { type: "messageBack", text: "/view", displayText: "/view"   } }
+      },
+      {
+        type: "Action.Submit",
+        title: "/delete",
+        data: { msteams: { type: "messageBack", text: "/delete",displayText: "/delete"   } }
+      },
+      {
+        type: "Action.Submit",
+        title: "/uploadfolder",
+        data: { msteams: { type: "messageBack", text: "/uploafolder",displayText: "/uploadfolder"   } }
+      },
+      {
+        type: "Action.Submit",
+        title: "/add",
+        data: { msteams: { type: "messageBack", text: "/add",displayText: "/add" } }
+      },
+      {
+        type: "Action.Submit",
+        title: "/help",
+        data: { msteams: { type: "messageBack", text: "/help",displayText:"/help" } }
+      }
+    ],
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
+  };
+
+  await context.sendActivity({
+    type: "message",
+    attachments: [
+      {
+        contentType: "application/vnd.microsoft.card.adaptive",
+        content: card
+      }
+    ]
+  });
 }
 
 
-//-------------------------------------------------------------------------------
-//Activity Handlers
+teamsBot.activity(ActivityTypes.Message, async (context, state) => {
+  const text = context.activity.text?.trim();
 
+  // Step 2: Handle resume link input
+  if (state.conversation.awaitingLink) {
+    // Try to extract from text first
+    const urlRegex = /@?(https?:\/\/[^\s<>"]+)/i;
+    let link = null;
+    if (text) {
+      const match = text.match(urlRegex);
+      link = match && match[1] ? match[1].trim() : null;
+    }
+    // If not found in text, check attachments
+    if (!link && context.activity.attachments && context.activity.attachments.length > 0) {
+      const attachment = context.activity.attachments[0];
+      // Case 1: contentUrl (for some file types)
+      if (attachment.contentUrl && attachment.contentUrl.includes('sharepoint.com')) {
+        link = attachment.contentUrl;
+      }
+      // Case 2: HTML content with <a href="...">
+      else if (
+        attachment.contentType === 'text/html' &&
+        typeof attachment.content === 'string'
+      ) {
+        // Extract href from <a ...> in HTML
+        const hrefMatch = attachment.content.match(/href="([^"]+)"/i);
+        if (hrefMatch && hrefMatch[1] && hrefMatch[1].includes('sharepoint.com')) {
+          link = hrefMatch[1];
+        }
+      }
+    }
+    if (link && link.includes('sharepoint.com')) {
+      state.conversation.resumeLink = link;
+      state.conversation.awaitingConfirmation = true;
+      state.conversation.awaitingLink = false;
+      await context.sendActivity(
+        `You entered:\n\n- **Employee ID:** ${state.conversation.addEmployeeId}\n- **Resume Link:** ${link}\n\nType **yes** to confirm or **no** to cancel.`
+      );
+    } else {
+      await context.sendActivity("❗ Please paste a valid SharePoint link.");
+    }
+    return;
+  }
 
+  // Step 3: Handle confirmation
+  if (state.conversation.awaitingConfirmation) {
+    if (text.toLowerCase() === "yes") {
+      // Show spinner card for uploading
+      await context.sendActivity({
+        type: "message",
+        attachments: [
+          {
+            contentType: "application/vnd.microsoft.card.adaptive",
+            content: {
+              type: "AdaptiveCard",
+              version: "1.4",
+              body: [
+                {
+                  type: "TextBlock",
+                  text: "⏳ Uploading resume, please wait...",
+                  size: "Large",
+                  weight: "Bolder",
+                  color: "Accent",
+                  wrap: true
+                }
+              ],
+              $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
+            }
+          }
+        ]
+      });
+      // Call API
+      try {
+        const payload = {
+          employee_id: state.conversation.addEmployeeId,
+          resume_link: state.conversation.resumeLink,
+        };
 
-teamsBot.activity(/^message/, async (context, state) => {
-  await context.sendActivity(`Matched with regex: ${context.activity.type}`);
+        // Log the payload being sent to NiFi
+
+        const response = await axiosWithFallback("post", "/add", {
+          data: payload,
+          config: { headers: { "Content-Type": "application/json" } }
+        });
+
+        const filteredData = { ...response.data };
+        delete filteredData.document_id;
+
+        await context.sendActivity({
+          type: "message",
+          attachments: [
+            {
+              contentType: "application/vnd.microsoft.card.adaptive",
+              content: {
+                type: "AdaptiveCard",
+                version: "1.4",
+                body: [
+                  {
+                    type: "TextBlock",
+                    text: "✅ Candidate Added Successfully!",
+                    size: "ExtraLarge",
+                    weight: "Bolder",
+                    color: "Good",
+                    wrap: true,
+                    horizontalAlignment: "Center",
+                    spacing: "Large"
+                  },
+            
+                ],
+                actions: [
+                  {
+                    type: "Action.Submit",
+                    title: "🔍 View Candidate Resume",
+                    data: { msteams: { type: "messageBack", text: `/view ${filteredData.employee_id}` } }
+                  }
+                ],
+                $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
+              }
+            }
+          ]
+        });
+
+      } catch (error) {
+        await context.sendActivity({
+          type: "message",
+          attachments: [
+            {
+              contentType: "application/vnd.microsoft.card.adaptive",
+              content: {
+                type: "AdaptiveCard",
+                version: "1.4",
+                body: [
+                  {
+                    type: "TextBlock",
+                    text: "❌ File Upload Failed",
+                    size: "Large",
+                    weight: "Bolder",
+                    color: "Attention",
+                    wrap: true
+                  },
+                  {
+                    type: "TextBlock",
+                    text: error.message || "Unknown error",
+                    wrap: true
+                  },
+                  {
+                    type: "TextBlock",
+                    text: "Please try again later or contact support if the issue persists.",
+                    wrap: true,
+                    spacing: "Small"
+                  }
+                ],
+                $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
+              }
+            }
+          ]
+        });
+      }
+    } else {
+      await context.sendActivity("❌ Operation cancelled.");
+    }
+
+    // Clear conversation state
+    delete state.conversation.awaitingConfirmation;
+    delete state.conversation.addEmployeeId;
+    delete state.conversation.resumeLink;
+  }
 });
 
-teamsBot.activity(
-  async (context) => Promise.resolve(context.activity.type === "message"),
-  async (context, state) => {
-    await context.sendActivity(`Matched function: ${context.activity.type}`);
-  }
-);
+
+// Helper: Send unknown message fallback with command list
+
+
+// -------------------------------------------------------------------------------
+// Activity Handlers
 
 // Handle file consent invoke activity for file upload
 teamsBot.activity("invoke", async (context, state) => {
@@ -1685,7 +1633,6 @@ teamsBot.activity("invoke", async (context, state) => {
           }
         ]
       });
-      await context.sendActivity(`🎉 **SUCCESS:** Resume document uploaded and shared in chat!`);
     } catch (err) {
       await context.sendActivity(`❌ **DEBUG:** Failed to upload file to Teams-provided uploadUrl: ${err.message}`);
       if (err.response?.data) {
@@ -1710,102 +1657,21 @@ teamsBot.activity("invoke", async (context, state) => {
 });
 
 teamsBot.conversationUpdate("membersAdded", async (context, state) => {
-  // Creative Adaptive Card with all available commands and buttons
-  const card = {
-    type: "AdaptiveCard",
-    version: "1.4",
-    body: [
-      {
-        type: "TextBlock",
-        text: "👋 Welcome to the HR Bot!",
-        size: "ExtraLarge",
-        weight: "Bolder",
-        color: "Accent",
-        horizontalAlignment: "center",
-        wrap: true
-      },
-      {
-        type: "TextBlock",
-        text: "Here are some things I can do for you:",
-        size: "Medium",
-        weight: "Bolder",
-        wrap: true,
-        spacing: "Medium"
-      },
-      {
-        type: "FactSet",
-        facts: [
-          { title: "/makeresume", value: "Generate a resume for a candidate (with or without job description)." },
-          { title: "/search", value: "Search for candidates by name, skill, or keyword." },
-          { title: "/skills", value: "Find candidates by specific skill(s)." },
-          { title: "/view", value: "View a candidate's resume by employee ID or name." },
-          { title: "/delete", value: "Delete a candidate by employee ID or name." },
-          { title: "/upload", value: "Upload a PDF, DOC, or DOCX resume for a candidate." }
-        ]
-      },
-      {
-        type: "TextBlock",
-        text: "Quick Actions:",
-        size: "Medium",
-        weight: "Bolder",
-        spacing: "Large"
-      }
-    ],
-    actions: [
-      {
-        type: "Action.Submit",
-        title: "/makeresume",
-        data: { msteams: { type: "messageBack", text: "/makeresume" } }
-      },
-      {
-        type: "Action.Submit",
-        title: "/search",
-        data: { msteams: { type: "messageBack", text: "/search" } }
-      },
-      {
-        type: "Action.Submit",
-        title: "/skills",
-        data: { msteams: { type: "messageBack", text: "/skills" } }
-      },
-      {
-        type: "Action.Submit",
-        title: "/view",
-        data: { msteams: { type: "messageBack", text: "/view" } }
-      },
-      {
-        type: "Action.Submit",
-        title: "/delete",
-        data: { msteams: { type: "messageBack", text: "/delete" } }
-      },
-      {
-        type: "Action.Submit",
-        title: "/upload",
-        data: { msteams: { type: "messageBack", text: "/upload" } }
-      }
-    ],
-    $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
-  };
-
-  await context.sendActivity({
-    type: "message",
-    attachments: [
-      {
-        contentType: "application/vnd.microsoft.card.adaptive",
-        content: card
-      }
-    ]
-  });
+  await sendWelcomeCard(context);
 });
 
 // Helper: Fetch and display /view card as fallback
 async function fetchAndDisplayViewCard(context, identifier_type, identifier) {
   try {
     await context.sendActivity('🔍 Fetching candidate profile as fallback...');
-    const nifiViewUrl = "http://104.208.162.61:8083/view";
+
     const payload = { identifier_type, identifier };
-    const response = await axios.post(nifiViewUrl, payload, {
-      headers: { "Content-Type": "application/json" },
-      timeout: 20000,
+    const response = await axiosWithFallback("post", "/view", {
+      data: payload,
+      config: {
+        headers: { "Content-Type": "application/json" },
+        timeout: 20000
+      }
     });
     let resumeData = response.data;
     if (typeof resumeData === "string") {
