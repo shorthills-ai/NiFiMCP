@@ -1706,4 +1706,3 @@ teamsBot.activity(
 
 
 module.exports.teamsBot = teamsBot;
-
