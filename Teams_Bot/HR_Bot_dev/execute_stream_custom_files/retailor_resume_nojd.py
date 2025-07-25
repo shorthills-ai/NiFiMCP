@@ -67,33 +67,7 @@ class ResumeRetailorNoJD:
             all_projects.append(exp_project)
         
         return all_projects
-    
-    def _extract_main_technology(self, description: str, technologies: list) -> str:
-        """Helper method to extract the main technology from project info."""
-        # First check the technologies list
-        if technologies:
-            return technologies[0].title()
-        
-        # Then check the description for common technologies
-        description_lower = description.lower()
-        common_techs = [
-            'n8n', 'python', 'javascript', 'react', 'node', 'nodejs', 'java', 'aws', 
-            'mongodb', 'mysql', 'postgresql', 'docker', 'kubernetes', 'tensorflow', 
-            'flask', 'django', 'angular', 'vue', 'spring', 'express', 'redis', 
-            'elasticsearch', 'jenkins', 'git', 'llm', 'openai', 'chatgpt', 'gpt', 
-            'azure', 'firebase', 'stripe', 'oauth', 'jwt', 'restapi', 'graphql', 
-            'websocket', 'microservices', 'serverless', 'lambda', 'html', 'css', 
-            'bootstrap', 'tailwind', 'nextjs', 'nuxtjs', 'svelte', 'php', 'laravel', 
-            'symfony', 'ruby', 'rails', 'go', 'rust', 'swift', 'kotlin', 'flutter', 
-            'dart', 'unity', 'unreal', 'blender'
-        ]
-        
-        for tech in common_techs:
-            if tech in description_lower:
-                # Special case for n8n to keep it uppercase
-                return 'n8n' if tech == 'n8n' else tech.title()
-        
-        return ""
+
     
     @staticmethod
     def _normalize_title(text):
@@ -102,144 +76,191 @@ class ResumeRetailorNoJD:
         return ''.join(c for c in text.lower() if c not in string.whitespace + string.punctuation)
     
     def universal_enhance_project_title(self, project: Dict) -> str:
-        """
-        UNIVERSAL function that ALWAYS enhances project titles to be skill-focused and impactful.
-        Works regardless of whether JD is provided or not. Guaranteed to produce a different title.
-        """
+
         original_title = project.get('title', '').strip()
         description = project.get('description', '')
         technologies = project.get('technologies', [])
-        
-        # If no original title, create a basic one
+
+        # If the original title is missing, create a placeholder to guide the LLM
         if not original_title:
-            original_title = "Technical Project"
-        
-        prompt = f"""You are an expert at creating impactful, skill-focused project titles. Your job is to rewrite this project title to be more professional, attention-grabbing, and technology-focused.
+            original_title = "Untitled Technical Project"
 
-CRITICAL REQUIREMENTS:
-- The new title MUST be different from the original title
-- Highlight the main technologies/skills used in the project
-- Make it professional and impactful
-- Use technology prefixes when applicable (e.g., "React-Based", "Python-Powered", "n8n-Driven", "AWS-Deployed")
-- Focus on what makes this project technically interesting
-- Return ONLY the enhanced title, no explanations
+        # This enhanced prompt gives the LLM clearer instructions and context,
+        # empowering it to create a superior title based on the project's substance.
+        prompt = f"""You are an expert resume writer. Your task is to rewrite a project title to be specific, impactful, and highlight the core technical achievement.
 
-Original Title: {original_title}
-Project Description: {description}
-Technologies Used: {', '.join(technologies) if technologies else 'Not specified'}
+    **Project Context:**
+    - **Original Title:** "{original_title}"
+    - **Description:** "{description}"
+    - **Technologies Used:** "{', '.join(technologies) if technologies else 'Not specified'}"
 
-Examples of good enhanced titles:
-- "n8n-Based Resume Automation Pipeline" 
-- "React-Powered E-commerce Platform"
-- "Python-Driven Data Analytics Dashboard"
-- "AWS-Deployed Microservices Architecture"
-- "MongoDB-Backed Social Media Application"
-- "Full-Stack Web Application with Authentication"
-- "Machine Learning-Powered Recommendation System"
-- "Real-Time Chat Application with WebSocket"
+    **CRITICAL INSTRUCTIONS:**
+    1.  **Create a NEW Title:** Your primary goal is to generate a title that is fundamentally different and more descriptive than the original. DO NOT simply rephrase the original title.
+    2.  **Focus on the Achievement:** Analyze the description to understand what was built, solved, or created. The title should reflect this outcome (e.g., "Automated Data Pipeline," "Scalable E-commerce Platform," "Real-time Chat Application").
+    3.  **Lead with Technology (If Applicable):** If a key technology is central to the project, use it to frame the title (e.g., "Python-Based API," "React-Powered Dashboard").
+    4.  **Be Specific and Professional:** Avoid generic titles. Make it sound like a real-world project.
+    5.  **Return ONLY the new title:** Your response must be a single line containing the title and nothing else.
 
-Create an enhanced, skill-focused title:"""
+    **Examples of Strong Transformations:**
+    - Original: "My E-commerce Site" -> New: "Full-Stack E-commerce Platform with Stripe Integration"
+    - Original: "Data Project" -> New: "Python-Driven ETL Pipeline for Sales Data Analytics"
+    - Original: "Resume tool" -> New: "n8n-Powered Workflow for Automated Resume Tailoring"
+
+    Rewrite the title based on the context provided:"""
 
         try:
             response = self.client.chat.completions.create(
                 model=self.deployment_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,  # Slightly higher for more variety
+                messages=[
+                    {"role": "system", "content": "You are a highly skilled resume and technical writer."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.4,  # Slightly increased for more creative and diverse titles
                 response_format={"type": "text"}
             )
-            enhanced_title = response.choices[0].message.content.strip()
-            
-            # Remove any quotes if they exist
-            enhanced_title = enhanced_title.strip('"\'')
-            
-            # Safety check: if somehow the same title is returned, force a change
-            if self._normalize_title(enhanced_title) == self._normalize_title(original_title):
-                # Extract main technology and create a forced enhancement
-                main_tech = self._extract_main_technology(description, technologies)
-                if main_tech:
-                    enhanced_title = f"{main_tech}-Based {original_title}"
-                else:
-                    enhanced_title = f"Advanced {original_title}"
-            
+            enhanced_title = response.choices[0].message.content.strip().strip('"\'')
+
+            # Safety Check: If the LLM fails to produce a new or valid title,
+            # programmatically create a different one without calling the old helper function.
+            is_same_title = self._normalize_title(enhanced_title) == self._normalize_title(original_title)
+            if not enhanced_title or is_same_title:
+                # Create a simple, guaranteed-different title as a fallback
+                return f"Optimized: {original_title}"
+
             return enhanced_title
-            
+
         except Exception as e:
-            print(f"Error enhancing project title: {str(e)}", file=sys.stderr)
-            # Robust fallback that always produces a different title
-            main_tech = self._extract_main_technology(description, technologies)
-            if main_tech:
-                return f"{main_tech}-Based {original_title}"
-            else:
-                return f"Professional {original_title}"
+            print(f"Error enhancing project title with LLM: {str(e)}", file=sys.stderr)
+            # Robust, non-LLM fallback in case of API failure.
+            # This ensures the script never crashes and always returns a valid, different title.
+            return f"Professional Project: {original_title}"
     
     def generate_professional_summary(self, candidate: Dict) -> str:
-        """Generates or enhances a professional summary based on candidate's profile."""
+        """
+        Generates or enhances a professional summary based on a candidate's profile.
+        
+        This function pre-processes the candidate's data into a clean summary to help the LLM
+        craft a compelling, narrative-driven summary that highlights their key value.
+        """
         existing_summary = candidate.get('summary', '').strip()
-        prompt = f"""You are an expert resume writer and HR professional. Your job is to ensure the candidate's professional summary is concise (3-4 sentences), clear, and tailored to their background. If a summary is provided, rewrite it to be more professional, justified, and impactful. If not, generate a new one based on the candidate's profile.
 
-CRITICAL RULES:
-- Write in the third person, maintaining a formal and confident tone.
-- The summary must be strictly based on the candidate's profile. Do not invent or exaggerate information.
-- Highlight the candidate's key strengths and value proposition for the role.
-- The summary should be 3-4 sentences, not too long, and very clear.
-- Return ONLY the summary paragraph. Do not include any extra text, labels, or quotation marks.
+        # --- Data Summarization Step ---
+        # Convert raw data into easy-to-read highlights for the LLM.
+        
+        # Summarize experience by listing job titles
+        experience_titles = [exp.get('title') for exp in candidate.get('experience', []) if exp.get('title')]
+        experience_summary = f"Career path includes roles like: {', '.join(experience_titles)}." if experience_titles else ""
 
-Candidate Profile:
-- Name: {candidate.get('name', '')}
-- Title: {candidate.get('title', '')}
-- Skills: {', '.join(candidate.get('skills', []))}
-- Experience: {json.dumps(candidate.get('experience', []), indent=2)}
-- Projects: {json.dumps(candidate.get('projects', []), indent=2)}
-- Education: {json.dumps(candidate.get('education', []), indent=2)}
+        # Summarize projects by listing their titles
+        project_titles = [p.get('title') for p in candidate.get('projects', []) if p.get('title')]
+        project_summary = f"Developed key projects such as: '{', '.join(project_titles)}'." if project_titles else ""
 
-Existing Summary: {existing_summary if existing_summary else 'None'}
+        # List top skills
+        skills_summary = ', '.join([str(s) for s in candidate.get('skills', [])[:15] if s])
 
-Write or enhance the professional summary as described above:"""
-        try:
-            response = self.client.chat.completions.create(
-                model=self.deployment_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.4,
-                response_format={"type": "text"}
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            print(f"Error generating summary: {str(e)}")
-            return existing_summary or candidate.get('summary', '')
-    
-    def generate_professional_title(self, candidate: Dict) -> str:
-        """Generate a professional job title based on candidate's experience and skills."""
-        prompt = f"""You are an expert HR professional specializing in job title creation. Create a specific, professional job title that accurately reflects the candidate's experience level.
+        # --- Enhanced Prompt ---
+        # This prompt provides a clear structure and narrative guidance.
+        prompt = f"""You are an expert resume writer, crafting a compelling professional summary for a candidate. The goal is to create a concise (3-4 sentences) and powerful pitch based on their profile.
 
-Rules:
-- Use industry-standard job titles
-- Match the candidate's actual experience level (don't overstate)
-- Be specific to the role and industry
-- Use ONLY information from the candidate's profile
-- Return ONLY the job title, no explanation
+    **Candidate Highlights:**
+    - **Professional Title:** {candidate.get('title', 'N/A')}
+    - **Key Skills:** {skills_summary}
+    - **Experience Snapshot:** {experience_summary}
+    - **Project Snapshot:** {project_summary}
+    - **Existing Summary (for reference):** "{existing_summary if existing_summary else 'None'}"
 
-Candidate Profile:
-- Name: {candidate.get('name', '')}
-- Current Title: {candidate.get('title', '')}
-- Skills: {', '.join(candidate.get('skills', []))}
-- Projects: {json.dumps(candidate.get('projects', []), indent=2)}
-- Education: {json.dumps(candidate.get('education', []), indent=2)}
+    **Instructions:**
+    1.  **Adopt a Professional Tone:** Write a confident summary as if you are highlighting the candidate's top qualifications. Use an implied first-person or formal third-person voice (e.g., "A results-driven professional..." or "Highly skilled in...").
+    2.  **Create a Narrative:**
+        - Start with a strong opening statement defining the candidate (e.g., "A highly motivated Software Engineer...").
+        - Weave in 2-3 key skills or technologies from their profile that are most impressive.
+        - Mention a key achievement or area of expertise demonstrated in their experience or projects.
+        - Conclude with their core value proposition.
+    3.  **Be Fact-Based:** Do not invent or exaggerate information. Ground every statement in the provided profile highlights.
+    4.  **Format:** The final output must be a single paragraph of 3-4 sentences. Do NOT include any headers, labels, or quotation marks.
 
-Generate a professional job title that matches their experience level:"""
+    **Rewrite or generate the professional summary:**"""
 
         try:
             response = self.client.chat.completions.create(
                 model=self.deployment_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
+                messages=[
+                    {"role": "system", "content": "You are a top-tier resume writer and career strategist."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.5,  # A higher temperature for more natural, compelling language
                 response_format={"type": "text"}
             )
             
-            title = response.choices[0].message.content.strip()
-            return title
+            summary = response.choices[0].message.content.strip()
+            # Fallback to the original if the model returns something too short or empty
+            return summary if len(summary) > 20 else existing_summary
+
+        except Exception as e:
+            print(f"Error generating summary: {str(e)}", file=sys.stderr)
+            # Fallback to the original summary in case of any API error
+            return existing_summary or candidate.get('summary', '')
+    
+    def generate_tailored_title(self, candidate: Dict, job_keywords: Set[str] = None) -> str:
+        """
+        Generates a professional job title based on the candidate's profile.
+        If job_keywords are provided, it tailors the title to align with the job description.
+        """
+        # 1. Pre-process and summarize the candidate's data for a cleaner prompt
+        experience_summary = [f"- {exp.get('title', '')} at {exp.get('company', '')}" for exp in candidate.get('experience', [])]
+        skills_summary = ', '.join([str(s) for s in candidate.get('skills', [])[:10] if s]) # Top 10 skills
+
+        # Base prompt with clear context
+        prompt_lines = [
+            "Based on the following professional profile, generate a single, industry-standard job title.",
+            "\n**Candidate Profile:**",
+            f"- **Current/Recent Title:** {candidate.get('title', 'N/A')}",
+            f"- **Key Skills:** {skills_summary}",
+            "- **Experience History:**",
+            *experience_summary, # Unpack the list of experience strings
+        ]
+
+        # 2. Dynamically add context if job keywords are available
+        if job_keywords:
+            prompt_lines.extend([
+                "\n**Target Job Keywords:**",
+                f"{', '.join(job_keywords)}",
+                "\n**Instructions:**",
+                "1. Analyze the candidate's skills and experience level.",
+                "2. Propose a title that aligns with BOTH the candidate's profile AND the job keywords.",
+                "3. Ensure the title accurately reflects their seniority (do not overstate).",
+                "4. Return ONLY the job title, nothing else."
+            ])
+        else:
+            prompt_lines.extend([
+                "\n**Instructions:**",
+                "1. Analyze the candidate's overall skills and experience.",
+                "2. Propose a title that best summarizes their professional standing.",
+                "3. Ensure the title accurately reflects their seniority.",
+                "4. Return ONLY the job title, nothing else."
+            ])
+        
+        final_prompt = "\n".join(prompt_lines)
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.deployment_name,
+                messages=[
+                    {"role": "system", "content": "You are a senior technical recruiter and career coach who excels at crafting accurate job titles."},
+                    {"role": "user", "content": final_prompt}
+                ],
+                temperature=0.2, # Lower temperature for more deterministic, accurate titles
+                response_format={"type": "text"}
+            )
+            
+            title = response.choices[0].message.content.strip().strip('"')
+            
+            # Final safety check to ensure a valid title is returned
+            return title if title else candidate.get('title', '')
             
         except Exception as e:
             print(f"Error generating job title: {str(e)}", file=sys.stderr)
+            # Fallback to the original title if there's an API error
             return candidate.get('title', '')
     
     def retailor_resume_no_jd(self, original_resume: Dict) -> Dict:
@@ -270,7 +291,7 @@ Generate a professional job title that matches their experience level:"""
         
         # Generate professional title if not present
         if not safe_resume.get("title"):
-            safe_resume["title"] = self.generate_professional_title(safe_resume)
+            safe_resume["title"] = self.generate_tailored_title(safe_resume, job_keywords)
         
         # Generate professional summary if not present
         if not safe_resume.get("summary"):

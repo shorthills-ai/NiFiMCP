@@ -68,3 +68,4 @@ except requests.exceptions.RequestException as e:
 except Exception as e:
     print(f"Unexpected error: {e}", file=sys.stderr)
     sys.exit(1)
+
