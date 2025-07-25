@@ -1,4 +1,3 @@
-
 const axios = require("axios");
 const FormData = require("form-data");
 
@@ -79,7 +78,6 @@ async function sendWelcomeCard(context) {
         facts: [
           { title: "/makeresume", value: "Generate a resume for a candidate (with or without job description)." },
           { title: "/search", value: "Search for candidates by name, skill, or keyword." },
-          { title: "/skills", value: "Find candidates by specific skill(s)." },
           { title: "/view", value: "View a candidate's resume by employee ID or name." },
           { title: "/delete", value: "Delete a candidate by employee ID or name." },
           { title: "/uploadfolder", value: "Upload folder onedrive link containing resumes" },
@@ -117,7 +115,6 @@ async function sendWelcomeCard(context) {
         { type: "imBack", title: "/makeresume", value: "/makeresume" },
         { type: "imBack", title: "/search", value: "/search" },
         { type: "imBack", title: "/add", value: "/add" },
-        { type: "imBack", title: "/skills", value: "/skills" },
         { type: "imBack", title: "/view", value: "/view" },
         { type: "imBack", title: "/delete", value: "/delete" },
         { type: "imBack", title: "/uploadfolder", value: "/uploadfolder" },
@@ -156,36 +153,17 @@ teamsBot.message("/test", async (context, state) => {
 
 async function sendCandidateCards(results, context) {
   const topResults = results.slice(0, 20);
- 
-  for (const r of topResults) {
-    const rawText = typeof r.text === 'string' ? r.text : "";
-    let name = r.name || "";
-    let empId = r.employee_id || r.filename?.replace(".txt", "") || "";
-    let summary = r.summary || "";
-    let phone = r.phone || "";
-    let email = r.email || "";
 
-    // Fallback extraction from rawText if fields are missing
-    if (!name) {
-      const nameMatch = rawText.match(/name\s*=\s*([^,}]+)/i);
-      if (nameMatch) name = nameMatch[1].trim();
-    }
-    if (!empId) {
-      const idMatch = rawText.match(/employee_id\s*=\s*([^,}]+)/i);
-      if (idMatch) empId = idMatch[1].trim();
-    }
-    if (!summary) {
-      const summaryMatch = rawText.match(/summary\s*=\s*([^,}]+)/i);
-      if (summaryMatch) summary = summaryMatch[1].trim();
-    }
-    if (!phone) {
-      const phoneMatch = rawText.match(/phone\s*=\s*([^,}]+)/i);
-      if (phoneMatch) phone = phoneMatch[1].trim();
-    }
-    if (!email) {
-      const emailMatch = rawText.match(/email\s*=\s*([^,}]+)/i);
-      if (emailMatch) email = emailMatch[1].trim();
-    }
+  for (const candidate of topResults) {
+    const name = candidate.name || "Unknown Candidate";
+    const empId = candidate.employee_id || "N/A";
+    const rawScore = typeof candidate.score === 'number' ? candidate.score : 0;
+    const score = (rawScore * 100).toFixed(2); // e.g., 94.56
+
+    // 🎨 Score color logic
+    let scoreColor = "Good"; // green
+    if (rawScore < 0.7) scoreColor = "Attention"; // red
+    else if (rawScore < 0.9) scoreColor = "Warning"; // yellow
 
     const card = {
       type: "AdaptiveCard",
@@ -195,29 +173,21 @@ async function sendCandidateCards(results, context) {
           type: "TextBlock",
           size: "Large",
           weight: "Bolder",
-          text: `👤 ${name || "Unknown"}`
+          text: `👤 ${name}`
         },
         {
           type: "TextBlock",
-          text: `🆔 Employee ID: ${empId || "N/A"}`,
+          text: `🆔 Employee ID: ${empId}`,
           wrap: true
         },
-        summary && {
+        {
           type: "TextBlock",
-          text: `📝 Summary: ${summary}`,
-          wrap: true
-        },
-        phone && {
-          type: "TextBlock",
-          text: `📞 Phone: ${phone}`,
-          wrap: true
-        },
-        email && {
-          type: "TextBlock",
-          text: `📧 Email: ${email}`,
-          wrap: true
+          text: `⭐ Score: ${score}%`,
+          wrap: true,
+          color: scoreColor,
+          weight: "Bolder"
         }
-      ].filter(Boolean),
+      ],
       actions: [
         {
           type: "Action.Submit",
@@ -225,14 +195,14 @@ async function sendCandidateCards(results, context) {
           data: {
             msteams: {
               type: "messageBack",
-              text: empId ? `/view ${empId}` : `/view ${name}`
+              text: `/view ${empId}`
             }
           }
         }
       ],
       $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
     };
- 
+
     await context.sendActivity({
       type: "message",
       attachments: [
@@ -264,18 +234,18 @@ teamsBot.message(/^\/search\s+(.*)/i, async (context, state) => {
       data: { query },
       config: {
         headers: { "Content-Type": "application/json" },
-        timeout: 10000
+        timeout: 60000
       }
     });
 
     const result = response.data;
 
-    if (!result || !result.results || result.results.length === 0) {
-      await context.sendActivity("⚠️ No candidates found.");
-      return;
-    }
-
-    await sendCandidateCards(result.results, context);
+    // if (!result || !result.results || result.results.length === 0) {
+    //   await context.sendActivity("⚠️ No candidates found.");
+    //   return;
+    // }
+    console.log("🔍 Found candidates:", result.length);
+    await sendCandidateCards(result, context);
 
   } catch (error) {
     const errMsg = error.response?.data || error.message;
@@ -284,57 +254,6 @@ teamsBot.message(/^\/search\s+(.*)/i, async (context, state) => {
   }
 });
 
-// --- /skills Command ---
-teamsBot.message(/^\/skills\s+(.*)/i, async (context, state) => {
-  const query = context.activity.text.replace(/^\/skills\s+/i, "").trim();
-
-  if (!query) {
-    await context.sendActivity("❗ Please provide a query after `/skills`.");
-    return;
-  }
-
-  try {
-    const response = await axiosWithFallback("post", "/skills", {
-      data: { query },
-      config: {
-        headers: { "Content-Type": "application/json" },
-        timeout: 10000
-      }
-    });
-
-    const result = response.data;
-
-    if (!result || !result.results || result.results.length === 0) {
-      await context.sendActivity("⚠️ No candidates found.");
-      return;
-    }
-
-    // Parse name and summary from text for each result
-    const parsedResults = result.results.map((r) => {
-      let candidate = {
-        filename: r.filename,
-        name: "Unknown",
-        summary: "",
-      };
-
-      const text = typeof r.text === 'string' ? r.text : '';
-      const matchName = text.match(/name=([^,]+)/);
-      const matchSummary = text.match(/summary=([^,]+)/);
-
-      if (matchName) candidate.name = matchName[1];
-      if (matchSummary) candidate.summary = matchSummary[1];
-
-      return candidate;
-    });
-
-    await sendCandidateCards(parsedResults, context);
-
-  } catch (error) {
-    const errMsg = error.response?.data || error.message;
-    await context.sendActivity(`❌ Skills Search Error:\n\
-\  ${errMsg}\  `);
-  }
-});
 
 // Helper function to display resume card
 async function displayResumeCard(context, fallbackData) {
@@ -1213,7 +1132,7 @@ teamsBot.message(/^\/delete(?:\s+(.*))?$/i, async (context, state) => {
     const payload = { employee_id: employeeId, name };
     const response = await axiosWithFallback("post", "/delete", {
       data: payload,
-      config: { headers: { "Content-Type": "application/json" }, timeout: 10000 }
+      config: { headers: { "Content-Type": "application/json" }, timeout: 60000 }
     });
 
     const result = response.data;
@@ -1420,8 +1339,7 @@ async function sendUnknownMessageWithCommands(context) {
         type: "FactSet",
         facts: [
           { title: "/makeresume", value: "Generate a resume for a candidate (with or without job description)." },
-          { title: "/search", value: "Search for candidates by name, skill, or keyword." },
-          { title: "/skills", value: "Find candidates by specific skill(s)." },
+          { title: "/search", value: "Search for candidates using a query" },
           { title: "/view", value: "View a candidate's resume by employee ID or name." },
           { title: "/delete", value: "Delete a candidate by employee ID or name." },
           { title: "/uploadfolder", value: "Upload onedrive folder containing resumes" },
@@ -1446,11 +1364,6 @@ async function sendUnknownMessageWithCommands(context) {
         type: "Action.Submit",
         title: "/search",
         data: { msteams: { type: "messageBack", text: "/search", displayText: "/search"  } }
-      },
-      {
-        type: "Action.Submit",
-        title: "/skills",
-        data: { msteams: { type: "messageBack", text: "/skills",displayText: "/skills"   } }
       },
       {
         type: "Action.Submit",
@@ -1793,3 +1706,4 @@ teamsBot.activity(
 
 
 module.exports.teamsBot = teamsBot;
+
