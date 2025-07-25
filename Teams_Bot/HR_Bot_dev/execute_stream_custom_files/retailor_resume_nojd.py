@@ -273,6 +273,7 @@ class ResumeRetailorNoJD:
         """
         # Convert ObjectId to string for JSON serialization
         safe_resume = self.convert_objectid_to_str(original_resume)
+        job_keywords = set(safe_resume.get('keywords', []))
         
         # Extract ALL projects from both projects and experience sections
         all_projects = self.extract_all_projects(safe_resume)
@@ -283,7 +284,7 @@ class ResumeRetailorNoJD:
             enhanced_title = self.universal_enhance_project_title(proj)
             proj_copy = proj.copy()
             proj_copy['title'] = enhanced_title
-            # Description remains unchanged when no JD
+            # Description remains unchanged when no JD  
             enhanced_projects.append(proj_copy)
         
         # Update the resume with enhanced project titles
@@ -291,7 +292,7 @@ class ResumeRetailorNoJD:
         
         # Generate professional title if not present
         if not safe_resume.get("title"):
-            safe_resume["title"] = self.generate_tailored_title(safe_resume, job_keywords)
+            safe_resume["title"] = self.generate_tailored_title(safe_resume,job_keywords)
         
         # Generate professional summary if not present
         if not safe_resume.get("summary"):
