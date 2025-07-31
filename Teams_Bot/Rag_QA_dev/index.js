@@ -37,7 +37,7 @@ adapter.onTurnError = async (context, error) => {
 // Create express application.
 const expressApp = express();
 expressApp.use(express.json());
-// expressApp.use(authorizeJWT(authConfig));
+expressApp.use(authorizeJWT(authConfig));
 
 const port = process.env.port || process.env.PORT || 3000;
 const server = expressApp.listen(port, () => {
