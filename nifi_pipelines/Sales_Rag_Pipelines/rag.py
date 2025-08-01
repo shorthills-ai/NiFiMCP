@@ -1,43 +1,29 @@
 import os
 import logging
-from io import BytesIO
 from typing import List, Dict, Any, Optional
-from pptx import Presentation
-from docx import Document
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form, Header, Depends
 from fastapi.responses import JSONResponse
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 import numpy as np
-import httpx
 from openai import AsyncAzureOpenAI
 import weaviate
 from weaviate.auth import AuthApiKey
 from weaviate.classes.query import MetadataQuery
-from fastapi import Request
 import json
-from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any
-import weaviate
-from weaviate.auth import AuthApiKey
-from weaviate.classes.query import MetadataQuery
 import uvicorn
 import traceback
-import logging
-import json
-import os
 import time
 import numpy as np
-from fastapi import Header, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from openai import AsyncAzureOpenAI
 from httpx_aiohttp import AiohttpTransport
 from aiohttp import ClientSession
 import openai
 import grpc
-from dotenv import load_dotenv
 # JWT imports
 import jwt
 from datetime import datetime, timedelta
@@ -51,14 +37,7 @@ from pathlib import Path
 load_dotenv()
 
 
-# Setup basic logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
 # === Load Env Variables ===
-#ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
-DRIVE_ID = os.getenv("DRIVE_ID")
 WEAVIATE_URL = os.getenv("WEAVIATE_URL")
 WEAVIATE_API_KEY = os.getenv("WEAVIATE_API_KEY")
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
@@ -88,10 +67,6 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 # Validate admin credentials
 if not ADMIN_PASSWORD:
     raise ValueError("ADMIN_PASSWORD environment variable is required for /token endpoint")
-
-
-GRAPH_BASE = "https://graph.microsoft.com/v1.0"
-#HEADERS = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Accept": "application/json"}
 
 
 import re
@@ -136,19 +111,6 @@ class TokenResponse(BaseModel):
 class UserPayload(BaseModel):
     exp: datetime  # Only expiration time needed
     valid: bool = True
-
-
-def verify_password(plain_password, hashed_password):
-    """Verify a password against its hash - DEPRECATED"""
-    # This function is no longer needed
-    pass
-
-
-def get_password_hash(password):
-    """Hash a password - DEPRECATED"""
-    # This function is no longer needed
-    pass
-
 
 def create_access_token():
     """Create a JWT access token using only JWT secret key and expiration hours"""
