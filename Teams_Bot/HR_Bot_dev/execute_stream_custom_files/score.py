@@ -133,31 +133,37 @@ class CandidateScorer:
             }
 
 def main():
+    original_stderr = sys.stderr
+    log_file_path = "/home/nifi/nifi2/users/HR_Teams_Bot_Dev/llm_usage.log"
     try:
-        raw = sys.stdin.read()
-        resumes = json.loads(raw)
-        if not isinstance(resumes, list):
-            resumes = [resumes]
+        with open(log_file_path, 'a') as log_file:
+            sys.stderr = log_file
+            raw = sys.stdin.read()
+            resumes = json.loads(raw)
+            if not isinstance(resumes, list):
+                resumes = [resumes]
 
-        scorer = CandidateScorer()
-        scored_results = []
-        for resume in resumes:
-            scored = scorer.calculate_score(resume)
-            scored_results.append({
-                "name": resume.get("name", ""),
-                "email": resume.get("email", ""),
-                "phone": resume.get("phone", ""),
-                "employee_id": resume.get("employee_id", ""),
-                "score": scored.get("score", 0),
-                "reason": scored.get("reason", {}),
-                "status": scored.get("status", "Rejected"),
-                "keywords": resume.get("keywords", []),
-                "job_description": resume.get("job_description", "")
-            })
-        print(json.dumps(scored_results, indent=2))
+            scorer = CandidateScorer()
+            scored_results = []
+            for resume in resumes:
+                scored = scorer.calculate_score(resume)
+                scored_results.append({
+                    "name": resume.get("name", ""),
+                    "email": resume.get("email", ""),
+                    "phone": resume.get("phone", ""),
+                    "employee_id": resume.get("employee_id", ""),
+                    "score": scored.get("score", 0),
+                    "reason": scored.get("reason", {}),
+                    "status": scored.get("status", "Rejected"),
+                    "keywords": resume.get("keywords", []),
+                    "job_description": resume.get("job_description", "")
+                })
+            print(json.dumps(scored_results, indent=2))
     except Exception as e:
         print(json.dumps({"error": f"Unexpected error in main: {e}"}), file=sys.stderr)
         sys.exit(1)
+    finally:
+        sys.stderr = original_stderr
 
 if __name__ == "__main__":
     main()

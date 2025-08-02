@@ -4,13 +4,21 @@ import json
 import requests
 import warnings
 from urllib3.exceptions import InsecureRequestWarning
+from dotenv import load_dotenv
+import os
+
+# ✅ Load .env file from current directory
+load_dotenv()
+
 
 # Suppress SSL warnings
 warnings.simplefilter('ignore', InsecureRequestWarning)
 
+
+cert_path=os.environ.get('CERT_PATH')
 # Elasticsearch connection details
-ELASTIC_URL = "https://172.200.58.63:9200/hrbot/_search"
-API_KEY = ""
+elastic_url = os.environ.get('ELASTIC_URL')
+api_key = os.environ.get("ELASTIC_API")
 
 # Read keywords and job_description JSON from stdin
 try:
@@ -33,12 +41,12 @@ query = {
 }
 headers = {
     "Content-Type": "application/json",
-    "Authorization": f"ApiKey {API_KEY}"
+    "Authorization": f"ApiKey {api_key}"
 }
 
 # Fetch and enrich resumes
 try:
-    response = requests.post(ELASTIC_URL, headers=headers, json=query, verify=False)
+    response = requests.post(elastic_url, headers=headers, json=query, verify=cert_path)
     response.raise_for_status()
 
     hits = response.json().get("hits", {}).get("hits", [])

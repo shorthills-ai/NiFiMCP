@@ -564,7 +564,7 @@ class ResumeRetailorWithJD:
 def main():
     # Redirect stderr to log file for error tracking
     original_stderr = sys.stderr
-    log_file_path = "/home/nifi/nifi2/users/kushagra/HR_Teams_Bot_Dev/llm_usage.log"
+    log_file_path = "/home/nifi/nifi2/users/HR_Teams_Bot_Dev/llm_usage.log"
     try:
         with open(log_file_path, 'a') as log_file:
             sys.stderr = log_file
