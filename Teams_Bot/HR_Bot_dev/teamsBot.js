@@ -951,12 +951,7 @@ async function sendSimpleCandidateCard(context, candidate, jobDescription) {
               type: "TextBlock",
         text: `📊 Score: ${candidate.score ?? "N/A"}`,
               wrap: true
-      },
-      {
-              type: "TextBlock",
-        text: `📝 Reason: ${candidate.reason || "N/A"}`,
-              wrap: true
-      },
+      },    
       {
               type: "TextBlock",
         text: `🔑 Keywords: ${(candidate.keywords || []).join(", ")}`,
@@ -1138,8 +1133,9 @@ teamsBot.message(/^\/delete(?:\s+(.*))?$/i, async (context, state) => {
     const result = response.data;
     if (result?.status === "success") {
       await context.sendActivity(`✅ Candidate deleted successfully.`);
-    } else {
-      await context.sendActivity(`⚠️ No candidate deleted.}`);
+    } 
+    if (result?.status === "not_found") {
+      await context.sendActivity(`Candidate Not found in the database.`);
     }
   } catch (err) {
     await context.sendActivity(`❌ Failed to delete candidate: ${err.message}`);
@@ -1517,10 +1513,16 @@ teamsBot.activity(ActivityTypes.Message, async (context, state) => {
                 ],
                 actions: [
                   {
-                    type: "Action.Submit",
-                    title: "🔍 View Candidate Resume",
-                    data: { msteams: { type: "messageBack", text: `/view ${filteredData.employee_id}` } }
+                  type: "Action.Submit",
+                  title: "👁️ View Resume",
+                  data: {
+                  employee_id: state.conversation.addEmployeeId,
+                  msteams: {
+                      type: "messageBack",
+                      text: `/view ${state.conversation.addEmployeeId}`
+                    }
                   }
+                }
                 ],
                 $schema: "http://adaptivecards.io/schemas/adaptive-card.json"
               }

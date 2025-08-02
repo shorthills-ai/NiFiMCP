@@ -4,35 +4,43 @@ import random
 from typing import List, Dict, Set, Tuple
 from openai import AzureOpenAI
 import sys
-from dotenv import load_dotenv
 import os
-
-# ✅ Load .env file from current directory
-load_dotenv()
+from datetime import datetime
 
 class ResumeRetailorNoJD:
     def __init__(self, azure_config: Dict[str, str]):
         """
         Initialize the resume retailor with Azure OpenAI configuration.
-        
         Args:
             azure_config: Dictionary containing Azure OpenAI configuration
-                - api_key: Azure OpenAI API key
-                - api_version: API version
-                - endpoint: Azure endpoint
-                - deployment: Model deployment name
         """
-        api_key = os.environ.get('OPENAI_API_KEY')
-        api_version = "2024-08-01-preview"
-        azure_endpoint = "https://us-tax-law-rag-demo.openai.azure.com/"
-        deployment_name = "gpt-4o-mini"
-
         self.client = AzureOpenAI(
-            api_key=api_key,
-            api_version=api_version,
-            azure_endpoint=azure_endpoint
+            api_key=azure_config.get('api_key'),
+            api_version=azure_config.get('api_version'),
+            azure_endpoint=azure_config.get('endpoint')
         )
-        self.deployment_name = deployment_name
+        self.deployment_name = azure_config.get('deployment')
+        self.input_cost_per_1k = 0.000165
+        self.output_cost_per_1k = 0.000660
+
+    def log_llm_usage(self, response, prompt_type):
+        try:
+            timestamp = datetime.now().isoformat()
+            usage = getattr(response, 'usage', None)
+            if usage:
+                prompt_tokens = usage.prompt_tokens
+                completion_tokens = usage.completion_tokens
+                input_cost = (prompt_tokens / 1000) * self.input_cost_per_1k
+                output_cost = (completion_tokens / 1000) * self.output_cost_per_1k
+                total_cost = input_cost + output_cost
+                
+
+                print(
+                    f"LLM_USAGE | timestamp={timestamp} | model={self.deployment_name} | type={prompt_type} | prompt_tokens={prompt_tokens} | completion_tokens={completion_tokens} | total_cost=${total_cost:.6f}",
+                    file=sys.stderr
+                )
+        except Exception as e:
+            print(f"LLM_USAGE_LOG_ERROR: {e}", file=sys.stderr)
     
     def convert_objectid_to_str(self, obj):
         """Convert ObjectId to string for JSON serialization."""
@@ -115,9 +123,10 @@ class ResumeRetailorNoJD:
                     {"role": "system", "content": "You are a highly skilled resume and technical writer."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.4,  # Slightly increased for more creative and diverse titles
+                temperature=0.4,
                 response_format={"type": "text"}
             )
+            self.log_llm_usage(response, "project_title")
             enhanced_title = response.choices[0].message.content.strip().strip('"\'')
 
             # Safety Check: If the LLM fails to produce a new or valid title,
@@ -131,55 +140,59 @@ class ResumeRetailorNoJD:
 
         except Exception as e:
             print(f"Error enhancing project title with LLM: {str(e)}", file=sys.stderr)
-            # Robust, non-LLM fallback in case of API failure.
-            # This ensures the script never crashes and always returns a valid, different title.
-            return f"Professional Project: {original_title}"
+            # Fallback: Always return the original title if LLM fails
+            return original_title
     
+
+
     def generate_professional_summary(self, candidate: Dict) -> str:
         """
-        Generates or enhances a professional summary based on a candidate's profile.
-        
-        This function pre-processes the candidate's data into a clean summary to help the LLM
-        craft a compelling, narrative-driven summary that highlights their key value.
+        Always generates a professional summary (4-5 lines) in a neutral, impactful, professional style, without personal pronouns.
         """
-        existing_summary = candidate.get('summary', '').strip()
-
-        # --- Data Summarization Step ---
-        # Convert raw data into easy-to-read highlights for the LLM.
-        
-        # Summarize experience by listing job titles
         experience_titles = [exp.get('title') for exp in candidate.get('experience', []) if exp.get('title')]
         experience_summary = f"Career path includes roles like: {', '.join(experience_titles)}." if experience_titles else ""
-
-        # Summarize projects by listing their titles
         project_titles = [p.get('title') for p in candidate.get('projects', []) if p.get('title')]
-        project_summary = f"Developed key projects such as: '{', '.join(project_titles)}'." if project_titles else ""
-
-        # List top skills
+        project_summary = f"Key projects include: {', '.join(project_titles)}." if project_titles else ""
         skills_summary = ', '.join([str(s) for s in candidate.get('skills', [])[:15] if s])
 
-        # --- Enhanced Prompt ---
-        # This prompt provides a clear structure and narrative guidance.
-        prompt = f"""You are an expert resume writer, crafting a compelling professional summary for a candidate. The goal is to create a concise (3-4 sentences) and powerful pitch based on their profile.
+        prompt = f"""
+        You are a top-tier executive resume writer and career strategist with over 20 years of experience in recruiting and hiring for Fortune 500 companies. Your task is to write a powerful 3–4 sentence professional summary that immediately captures a hiring manager's attention and conveys the candidate's value proposition.
+        Follow these expert guidelines precisely:
+        Candidate Context:
+        Professional Title: {candidate.get('title', 'N/A')}
+        Career Stage: {candidate.get('career_stage', 'Experienced Professional')} #(Options: Entry-Level, Mid-Career, Senior Leader, Executive, Career Changer)
+        Years of Experience: {candidate.get('years_experience', 'N/A')}
+        Top Skills (up to 15): {skills_summary}
+        Key Roles & Experience: {experience_summary}
+        Major Projects & Outcomes: {project_summary}
 
-    **Candidate Highlights:**
-    - **Professional Title:** {candidate.get('title', 'N/A')}
-    - **Key Skills:** {skills_summary}
-    - **Experience Snapshot:** {experience_summary}
-    - **Project Snapshot:** {project_summary}
-    - **Existing Summary (for reference):** "{existing_summary if existing_summary else 'None'}"
+        1. Adaptive Writing Strategy:
+        For Senior Leader/Executive: Start with a powerful statement about leadership scope or strategic impact. Emphasize budget management, team leadership, P&L responsibility, and market-level outcomes.
+        For Mid-Career/Experienced Professional: Lead with years of experience and core expertise. Focus on quantifiable achievements and proven skills directly relevant to the professional title.
+        For Entry-Level: Focus on academic background, key technical skills, and internship or project-based outcomes. Highlight ambition, core competencies, and a strong understanding of foundational principles.
+        For Career Changer: Bridge the past and present. Start by stating the target professional title, then connect relevant skills from previous roles to the new field, emphasizing transferable achievements.
 
-    **Instructions:**
-    1.  **Adopt a Professional Tone:** Write a confident summary as if you are highlighting the candidate's top qualifications. Use an implied first-person or formal third-person voice (e.g., "A results-driven professional..." or "Highly skilled in...").
-    2.  **Create a Narrative:**
-        - Start with a strong opening statement defining the candidate (e.g., "A highly motivated Software Engineer...").
-        - Weave in 2-3 key skills or technologies from their profile that are most impressive.
-        - Mention a key achievement or area of expertise demonstrated in their experience or projects.
-        - Conclude with their core value proposition.
-    3.  **Be Fact-Based:** Do not invent or exaggerate information. Ground every statement in the provided profile highlights.
-    4.  **Format:** The final output must be a single paragraph of 3-4 sentences. Do NOT include any headers, labels, or quotation marks.
+        2. Core Writing Requirements:
+        Length & Structure: Exactly 3–4 sentences, each delivering a distinct and impactful point.
+        Tone & Language: Use an authoritative, factual, and confident tone. Employ active-voice verbs (e.g., "architected," "spearheaded," "revitalized"). Do not use personal pronouns ("I," "me," "my").
+        Content & Focus:
+        Sentence 1: The Hook. Open with the candidate's professional identity, incorporating their title and years of experience (or for career changers, their target title).
+        Sentence 2: The Expertise. Detail 2-3 core areas of functional expertise (e.g., "intelligent systems design," "workflow automation," "strategic AI implementation"), not just a list of technologies.
+        Sentence 3: The Proof. Showcase a major achievement, quantifying it with metrics. If metrics are not available, describe the business outcome or scope of the achievement (e.g., "streamlined recruitment processes by developing a novel AI tool").
+        Sentence 4: The Value & Impact. Connect the candidate's work to broader business value. Explain how their contributions have driven growth, improved processes, or supported strategic goals. Conclude with a statement of their overall capability.
 
-    **Rewrite or generate the professional summary:**"""
+        3. Accuracy & Formatting:
+        Fact-Based: Do not invent facts or skills. Base the summary exclusively on the provided Candidate Context.
+        Clean Output: Do not add headers, labels, or quotation marks. The output must be a single, continuous paragraph.
+        
+        4. Strategic Abstraction of Technical Details (New Guideline):
+        Translate, Don't List: Your primary goal is to translate technical skills into business capabilities. Instead of listing specific frameworks or languages, describe what the candidate does with them.
+        Instead of: "Proficient in Python, Flask, FastAPI, LangChain, and Hugging Face..."
+        Aim for: "Expertise in developing and deploying scalable AI solutions and intelligent automation systems..."
+        Focus on Business Problems, Not Technical Architecture: Describe projects based on the business problem they solved or the value they created.
+        Instead of: "Architected an OpenAI-Enhanced Automated Resume Tailoring Pipeline integrating Microsoft Teams..."
+        Aim for: "Spearheaded the development of an AI-driven talent acquisition tool that automated resume processing and enhanced candidate engagement..."
+        General Principle: Emphasize the "what" (the capability) and the "why" (the business impact) over the "how" (the specific tools). A touch of technical context is good for credibility, but the focus must remain on strategic contribution."""
 
         try:
             response = self.client.chat.completions.create(
@@ -188,39 +201,51 @@ class ResumeRetailorNoJD:
                     {"role": "system", "content": "You are a top-tier resume writer and career strategist."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.5,  # A higher temperature for more natural, compelling language
+                temperature=0.5,
                 response_format={"type": "text"}
             )
-            
+            self.log_llm_usage(response, "summary")
             summary = response.choices[0].message.content.strip()
-            # Fallback to the original if the model returns something too short or empty
-            return summary if len(summary) > 20 else existing_summary
-
+            
+            # ✅ CORRECTED LOGIC: Only fallback if the summary is completely empty.
+            if not summary:
+                return (
+                    f"Professional background includes roles such as {', '.join(experience_titles)}. "
+                    f"Demonstrated expertise in {skills_summary}. "
+                    f"Projects delivered: {', '.join(project_titles)}. "
+                    f"Recognized for reliability and technical proficiency."
+                )
+            return summary
         except Exception as e:
             print(f"Error generating summary: {str(e)}", file=sys.stderr)
-            # Fallback to the original summary in case of any API error
-            return existing_summary or candidate.get('summary', '')
-    
+            # Fallback for API errors: Use candidate's original summary if available, else use hardcoded fallback
+            original_summary = candidate.get('summary')
+            if original_summary:
+                return original_summary
+            return (
+                f"Professional background includes roles such as {', '.join(experience_titles)}. "
+                f"Demonstrated expertise in {skills_summary}. "
+                f"Projects delivered: {', '.join(project_titles)}. "
+                f"Recognized for reliability and technical proficiency."
+            )
+        
     def generate_tailored_title(self, candidate: Dict, job_keywords: Set[str] = None) -> str:
         """
         Generates a professional job title based on the candidate's profile.
         If job_keywords are provided, it tailors the title to align with the job description.
         """
-        # 1. Pre-process and summarize the candidate's data for a cleaner prompt
         experience_summary = [f"- {exp.get('title', '')} at {exp.get('company', '')}" for exp in candidate.get('experience', [])]
-        skills_summary = ', '.join([str(s) for s in candidate.get('skills', [])[:10] if s]) # Top 10 skills
+        skills_summary = ', '.join([str(s) for s in candidate.get('skills', [])[:10] if s])
 
-        # Base prompt with clear context
         prompt_lines = [
             "Based on the following professional profile, generate a single, industry-standard job title.",
             "\n**Candidate Profile:**",
             f"- **Current/Recent Title:** {candidate.get('title', 'N/A')}",
             f"- **Key Skills:** {skills_summary}",
             "- **Experience History:**",
-            *experience_summary, # Unpack the list of experience strings
+            *experience_summary,
         ]
 
-        # 2. Dynamically add context if job keywords are available
         if job_keywords:
             prompt_lines.extend([
                 "\n**Target Job Keywords:**",
@@ -239,7 +264,6 @@ class ResumeRetailorNoJD:
                 "3. Ensure the title accurately reflects their seniority.",
                 "4. Return ONLY the job title, nothing else."
             ])
-        
         final_prompt = "\n".join(prompt_lines)
 
         try:
@@ -249,18 +273,15 @@ class ResumeRetailorNoJD:
                     {"role": "system", "content": "You are a senior technical recruiter and career coach who excels at crafting accurate job titles."},
                     {"role": "user", "content": final_prompt}
                 ],
-                temperature=0.2, # Lower temperature for more deterministic, accurate titles
+                temperature=0.2,
                 response_format={"type": "text"}
             )
-            
+            self.log_llm_usage(response, "job_title")
             title = response.choices[0].message.content.strip().strip('"')
-            
-            # Final safety check to ensure a valid title is returned
             return title if title else candidate.get('title', '')
-            
         except Exception as e:
             print(f"Error generating job title: {str(e)}", file=sys.stderr)
-            # Fallback to the original title if there's an API error
+            # Fallback: Always return the original title if LLM fails
             return candidate.get('title', '')
     
     def retailor_resume_no_jd(self, original_resume: Dict) -> Dict:
@@ -294,43 +315,38 @@ class ResumeRetailorNoJD:
         if not safe_resume.get("title"):
             safe_resume["title"] = self.generate_tailored_title(safe_resume,job_keywords)
         
-        # Generate professional summary if not present
-        if not safe_resume.get("summary"):
-            safe_resume["summary"] = self.generate_professional_summary(safe_resume)
+        # Always generate professional summary using LLM (original summary only used as fallback)
+        safe_resume["summary"] = self.generate_professional_summary(safe_resume)
         
         return safe_resume
 
 def main():
-    """
-    Reads resume from stdin, retailors it, and prints to stdout.
-    """
+
+    original_stderr = sys.stderr
+    log_file_path = "/home/nifi/nifi2/users/kushagra/HR_Teams_Bot_Dev/llm_usage.log"
     try:
-        # Example Azure OpenAI configuration (replace with your actual credentials)
-        azure_config = {
-            "api_key": os.environ.get('OPENAI_API_KEY'),
-            "api_version": "2024-02-01",
-            "endpoint": "https://resumeparser-dev.openai.azure.com/",
-            "deployment": "gpt4o-mini"
-        }
-        
-        # Read resume data from stdin
-        input_resume = json.load(sys.stdin)
-        
-        # Initialize the retailor
-        retailor = ResumeRetailorNoJD(azure_config)
-        
-        # Retailor the resume
-        retailored_resume = retailor.retailor_resume_no_jd(input_resume)
-        
-        # Print the retailored resume to stdout
-        print(json.dumps(retailored_resume, indent=2))
-        
+        with open(log_file_path, 'a') as log_file:
+            sys.stderr = log_file
+            azure_config = {
+                "api_key": os.getenv("AZURE_API_KEY"),
+                "api_version": os.getenv("AZURE_API_VERSION"),
+                "endpoint": os.getenv("AZURE_ENDPOINT"),
+                "deployment": os.getenv("AZURE_DEPLOYMENT")
+            }
+            input_resume = json.load(sys.stdin)
+            retailor = ResumeRetailorNoJD(azure_config)
+            retailored_resume = retailor.retailor_resume_no_jd(input_resume)
+            print(json.dumps(retailored_resume, indent=2))
     except json.JSONDecodeError:
         print(json.dumps({"error": "Invalid JSON input"}), file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(json.dumps({"error": f"An unexpected error occurred: {str(e)}"}), file=sys.stderr)
         sys.exit(1)
+    finally:
+        sys.stderr = original_stderr
+        
+
 
 if __name__ == "__main__":
     main()
