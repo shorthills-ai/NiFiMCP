@@ -623,22 +623,58 @@ teamsBot.message("/makeresume", async (context, state) => {
   }
 
   try {
-    // User-friendly loader for single-candidate or JD flow
-    if (identifier_type && identifier && job_description) {
+    // ✅ NEW: Check if candidate exists BEFORE attempting resume generation
+    if (identifier_type && identifier) {
       await context.sendActivity('🔍 Looking for candidate...');
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      await context.sendActivity('🛠️ Retailoring resume for the job description...');
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      await context.sendActivity('⏳ Generating tailored resume...');
-    } else if (identifier_type && identifier) {
-      await context.sendActivity('🔍 Looking for candidate...');
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      await context.sendActivity('⏳ Generating resume...');
+      
+      // First, verify the candidate exists using /view endpoint
+      try {
+        const candidateCheckPayload = { identifier_type, identifier };
+        const candidateCheckResponse = await axiosWithFallback("post", "/view", {
+          data: candidateCheckPayload,
+          config: {
+            headers: { "Content-Type": "application/json" },
+            timeout: 20000
+          }
+        });
+        
+        let candidateData = candidateCheckResponse.data;
+        if (typeof candidateData === "string") {
+          try {
+            candidateData = JSON.parse(candidateData);
+          } catch (e) {
+            // If parsing fails, assume candidate not found
+            await context.sendActivity("❌ Candidate not found in database.");
+            return;
+          }
+        }
+        
+        // Check if candidate data is valid
+        if (!candidateData || (!candidateData.name && !candidateData.skills && !candidateData.experience)) {
+          await context.sendActivity("❌ Candidate not found in database.");
+          return;
+        }
+        
+        // Candidate found, proceed with resume generation
+        if (job_description) {
+          await context.sendActivity('🛠️ Retailoring resume for the job description...');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          await context.sendActivity('⏳ Generating tailored resume...');
+        } else {
+          await context.sendActivity('⏳ Generating resume...');
+        }
+        
+      } catch (candidateCheckErr) {
+        // Candidate check failed
+        await context.sendActivity("❌ Candidate not found in database.");
+        return;
+      }
     } else if (job_description && !identifier_type) {
       await context.sendActivity('🔍 Searching candidates...');
       await new Promise(resolve => setTimeout(resolve, 2000));
       await context.sendActivity('📊 Evaluating and scoring candidates...');
     }
+    
     // First, try to get binary response from NIFI processor
     const response = await axiosWithFallback("post", "/makeresume", {
       data: payload,
@@ -703,7 +739,7 @@ teamsBot.message("/makeresume", async (context, state) => {
       const isWordDoc = firstBytes[0] === 0x50 && firstBytes[1] === 0x4B; // ZIP signature (Word docs are ZIP files)
       
       if (isWordDoc) {
-        // This is a genuine Word document - proceed with upload
+        // This is a genuine  Word document - proceed with upload
         if (context.activity.channelId === 'emulator') {
           await context.sendActivity("✅ Resume generated! (Teams Playground mode - file would be uploaded to OneDrive in production)");
           await context.sendActivity(`📄 File size: ${(buffer.length / 1024).toFixed(2)} KB`);
@@ -737,11 +773,11 @@ teamsBot.message("/makeresume", async (context, state) => {
             await context.sendActivity(`📋 Backup JSON Data: Available (${Object.keys(resumeJsonData).length} fields)`);
           }
         } else {
-          await context.sendActivity("⚠️ File upload is only available in personal chat. Here is the resume data:");
+          await context.sendActivity("⚠️ Resume generation is only available in personal chat");
           if (resumeJsonData) {
             await displayResumeCard(context, resumeJsonData);
           } else if (identifier_type && identifier) {
-            await context.sendActivity('No resume data available to display. Attempting to fetch candidate profile...');
+            await context.sendActivity('No resume document available to display. Attempting to fetch candidate profile...');
             await fetchAndDisplayViewCard(context, identifier_type, identifier);
           } else {
             await context.sendActivity(`❌ No resume data available to display.`);
@@ -860,9 +896,20 @@ teamsBot.message("/makeresume", async (context, state) => {
       }
     }
 
-    // Display fallback adaptive card if we have valid JSON data
-    if (fallbackData && typeof fallbackData === "object") {
-      if (!identifier_type && Array.isArray(fallbackData)) {
+      // Display fallback adaptive card if we have valid JSON data
+  if (fallbackData && typeof fallbackData === "object") {
+    // ✅ KEY FIX: Check if this is valid resume data (same logic as /view command)
+    if (!fallbackData || (!fallbackData.name && !fallbackData.skills && !fallbackData.experience)) {
+      // This is "candidate not found" - handle it like /view command
+      if (identifier_type && identifier) {
+        await context.sendActivity("❌ Candidate not found in database.");
+      } else {
+        await context.sendActivity("❌ No candidates found for the provided job description.");
+      }
+      return; // Exit early, don't try to generate resume
+    }
+
+    if (!identifier_type && Array.isArray(fallbackData)) {
         await context.sendActivity('🔍 Searching candidates...');
         await new Promise(resolve => setTimeout(resolve, 2000));
         await context.sendActivity('📊 Evaluating and scoring candidates...');
@@ -1665,7 +1712,7 @@ teamsBot.conversationUpdate("membersAdded", async (context, state) => {
 // Helper: Fetch and display /view card as fallback
 async function fetchAndDisplayViewCard(context, identifier_type, identifier) {
   try {
-    await context.sendActivity('🔍 Fetching candidate profile as fallback...');
+    await context.sendActivity('🔍 Fetching candidate profile...');
 
     const payload = { identifier_type, identifier };
     const response = await axiosWithFallback("post", "/view", {

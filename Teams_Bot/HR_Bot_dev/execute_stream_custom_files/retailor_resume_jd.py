@@ -93,33 +93,159 @@ class ResumeRetailorWithJD:
         """Normalize text for strict comparison: lowercase, remove whitespace and punctuation."""
         return ''.join(c for c in text.lower() if c not in string.whitespace + string.punctuation)
     
+    def _determine_industry_llm(self, company: str, description: str) -> str:
+        """
+        Use LLM to determine the industry based on company name and description.
+        Returns the industry name or empty string if cannot determine.
+        """
+        prompt = f"""You are an expert business analyst specializing in industry classification. Your task is to identify the primary industry of a company based on its name and description.
+
+                **Company Information:**
+                - Company Name: "{company}"
+                - Description: "{description}"
+
+                **Instructions:**
+                1. Analyze the company name and description to determine the primary industry.
+                2. Consider both explicit mentions and contextual clues.
+                3. Return ONLY the industry name in Title Case (e.g., "Finance", "Healthcare", "Technology").
+                4. If the industry is unclear or ambiguous, return "Unknown".
+                5. Use standard industry categories like: Finance, Healthcare, Technology, Retail, Manufacturing, Education, Consulting, Government, Nonprofit, Media, Real Estate, Energy, Transportation, Hospitality, Legal, etc.
+
+                **Examples:**
+                - Company: "JPMorgan Chase", Description: "Financial services and banking" → "Finance"
+                - Company: "Mayo Clinic", Description: "Healthcare and medical services" → "Healthcare"
+                - Company: "Google", Description: "Technology and software development" → "Technology"
+                - Company: "Walmart", Description: "Retail and e-commerce" → "Retail"
+
+                Return the industry name:"""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.deployment_name,
+                messages=[
+                    {"role": "system", "content": "You are an expert business analyst specializing in industry classification."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                response_format={"type": "text"}
+            )
+            self.log_llm_usage(response, "industry_detection")
+            industry = response.choices[0].message.content.strip().strip('"\'')
+            
+            # Validate the response
+            if industry and industry.lower() not in ['unknown', 'unclear', 'ambiguous', '']:
+                return industry
+            return ""
+            
+        except Exception as e:
+            print(f"Error detecting industry with LLM: {str(e)}", file=sys.stderr)
+            return ""
+
+    def _determine_industry_fallback(self, company: str, description: str) -> str:
+        """
+        Fallback method using hardcoded keywords to determine industry.
+        Returns the industry name or empty string if cannot determine.
+        """
+        # Convert to lowercase for easier matching
+        company_lower = company.lower()
+        description_lower = description.lower()
+        combined_text = f"{company_lower} {description_lower}"
+        
+        # Industry keywords mapping
+        industry_keywords = {
+            'finance': ['bank', 'financial', 'investment', 'credit', 'insurance', 'wealth', 'capital', 'trading', 'fund', 'asset', 'mortgage', 'loan'],
+            'healthcare': ['hospital', 'medical', 'health', 'pharmaceutical', 'biotech', 'clinical', 'patient', 'doctor', 'nurse', 'therapy', 'diagnostic'],
+            'technology': ['tech', 'software', 'ai', 'machine learning', 'data', 'cloud', 'digital', 'platform', 'app', 'system', 'development'],
+            'retail': ['retail', 'ecommerce', 'shopping', 'store', 'merchant', 'commerce', 'marketplace', 'sales', 'customer'],
+            'manufacturing': ['manufacturing', 'factory', 'production', 'industrial', 'automotive', 'aerospace', 'chemical', 'materials'],
+            'education': ['university', 'college', 'school', 'education', 'learning', 'academic', 'research', 'student'],
+            'consulting': ['consulting', 'advisory', 'strategy', 'management', 'professional services', 'business services'],
+            'government': ['government', 'public', 'federal', 'state', 'municipal', 'agency', 'department'],
+            'nonprofit': ['nonprofit', 'charity', 'foundation', 'ngo', 'volunteer', 'social impact'],
+            'media': ['media', 'entertainment', 'publishing', 'broadcasting', 'advertising', 'marketing', 'content'],
+            'real_estate': ['real estate', 'property', 'construction', 'development', 'architecture', 'building'],
+            'energy': ['energy', 'oil', 'gas', 'renewable', 'solar', 'wind', 'power', 'utility'],
+            'transportation': ['transportation', 'logistics', 'shipping', 'delivery', 'freight', 'supply chain']
+        }
+        
+        # Check for industry matches - prioritize more specific matches
+        # First check for exact company name matches that might indicate industry
+        company_words = company_lower.split()
+        for word in company_words:
+            if word in ['bank', 'clinic', 'hospital', 'university', 'college']:
+                if word in ['bank']:
+                    return "Finance"
+                elif word in ['clinic', 'hospital']:
+                    return "Healthcare"
+                elif word in ['university', 'college']:
+                    return "Education"
+        
+        # Then check for keyword matches in the combined text
+        for industry, keywords in industry_keywords.items():
+            for keyword in keywords:
+                if keyword in combined_text:
+                    return industry.replace('_', ' ').title()
+        
+        return ""
+
+    def _determine_industry(self, company: str, description: str) -> str:
+        """
+        Determine the industry using LLM first, with hardcoded fallback.
+        Returns the industry name or empty string if cannot determine.
+        """
+        # Try LLM first
+        industry = self._determine_industry_llm(company, description)
+        
+        # If LLM fails or returns empty, use fallback
+        if not industry:
+            industry = self._determine_industry_fallback(company, description)
+        
+        return industry
+    
     def universal_enhance_project_title(self, project: Dict) -> str:
 
         original_title = project.get('title', '').strip()
         description = project.get('description', '')
         technologies = project.get('technologies', [])
+        company = project.get('company', '')
+        source = project.get('source', '')
 
-        # Use a placeholder if the original title is missing
+        # If the original title is missing, create a placeholder to guide the LLM
         if not original_title:
             original_title = "Untitled Technical Project"
 
-        # Prompt for LLM to generate a superior project title
-        prompt = f"""You are an expert resume writer. Your task is to rewrite a project title to be specific, impactful, and highlight the core technical achievement.
+        # Determine if this is a work experience project and get industry info
+        is_work_experience = source == 'experience'
+        industry_suffix = ""
+        
+        if is_work_experience and company:
+            # Determine industry from company name or description
+            industry = self._determine_industry(company, description)
+            if industry:
+                industry_suffix = f" - {industry}"
+
+        # This enhanced prompt gives the LLM clearer instructions and context,
+        # empowering it to create a superior title based on the project's substance.
+        prompt = f"""You are an expert resume writer. Your task is to rewrite a project title to be specific, impactful, and professional in exactly 5 to 7 words not more than that. It should be a single line and not more than 7 words. It should be specific to the project and not hallucinate.
 
     **Project Context:**
     - **Original Title:** "{original_title}"
     - **Description:** "{description}"
     - **Technologies Used:** "{', '.join(technologies) if technologies else 'Not specified'}"
+    - **Company:** "{company}"
+    - **Source:** {"Work Experience" if is_work_experience else "Personal Project"}
+
     **CRITICAL INSTRUCTIONS:**
-    1.  **Create a NEW Title:** Your primary goal is to generate a title that is fundamentally different and more descriptive than the original. DO NOT simply rephrase the original title.
+    1.  **Create a NEW Title:** Your primary goal is to generate a title that is fundamentally different from the original and is more professional and impactful. DO NOT simply rephrase the original title.
     2.  **Focus on the Achievement:** Analyze the description to understand what was built, solved, or created. The title should reflect this outcome (e.g., "Automated Data Pipeline," "Scalable E-commerce Platform," "Real-time Chat Application").
     3.  **Lead with Technology (If Applicable):** If a key technology is central to the project, use it to frame the title (e.g., "Python-Based API," "React-Powered Dashboard").
     4.  **Be Specific and Professional:** Avoid generic titles. Make it sound like a real-world project.
-    5.  **Return ONLY the new title:** Your response must be a single line containing the title and nothing else.
+    5.  **Industry Context (Work Experience Only):** If this is work experience, consider the industry context but DO NOT add industry suffix - that will be added automatically.
+    6.  **Return ONLY the new title:** Your response must be a single line containing the title and nothing else.
 
     **Examples of Strong Transformations:**
     - Original: "My E-commerce Site" -> New: "Full-Stack E-commerce Platform with Stripe Integration"
-    - Original: "Data Project" -> New: "Python-Driven ETL Pipeline for Sales Data Analytics"
+    - Original: "Data Project" -> New: "Python-Driven ETL Pipeline for Sales Analytics"
     - Original: "Resume tool" -> New: "n8n-Powered Workflow for Automated Resume Tailoring"
 
     Rewrite the title based on the context provided:"""
@@ -137,18 +263,29 @@ class ResumeRetailorWithJD:
             self.log_llm_usage(response, "project_title")
             enhanced_title = response.choices[0].message.content.strip().strip('"\'')
 
-            # Fallback if LLM fails to produce a new or valid title
+            # Safety Check: If the LLM fails to produce a new or valid title,
+            # programmatically create a different one without calling the old helper function.
             is_same_title = self._normalize_title(enhanced_title) == self._normalize_title(original_title)
             if not enhanced_title or is_same_title:
                 # Create a simple, guaranteed-different title as a fallback
-                return f"Optimized: {original_title}"
+                enhanced_title = f"Optimized: {original_title}"
+
+            # Add industry suffix for work experience projects
+            if is_work_experience and industry_suffix:
+                enhanced_title = f"{enhanced_title}{industry_suffix}"
 
             return enhanced_title
 
         except Exception as e:
             print(f"Error enhancing project title with LLM: {str(e)}", file=sys.stderr)
             # Fallback: Always return the original title if LLM fails
-            return original_title
+            fallback_title = original_title
+            
+            # Add industry suffix for work experience projects even in fallback
+            if is_work_experience and industry_suffix:
+                fallback_title = f"{fallback_title}{industry_suffix}"
+                
+            return fallback_title
     
     def enhance_project_description_car(self, project: Dict, job_keywords: Set[str]) -> str:
         """Enhance project description using a flexible CARS model with varied hooks, vocabulary, and keyword highlighting."""
@@ -202,7 +339,7 @@ class ResumeRetailorWithJD:
                 response_format={"type": "text"}
             )
             self.log_llm_usage(response, "project_description_car_final")
-            enhanced_description = response.choices[0].message.content.strip()
+            enhanced_description = response.choices[0].message.content.strip().strip('"\'')
             
             if not enhanced_description or len(enhanced_description) < 20:
                 return original_description
@@ -248,41 +385,41 @@ class ResumeRetailorWithJD:
 
             # Create prompt for LLM to evaluate project relevance
             prompt = f"""
-    You are a senior technical recruiter and talent strategist. Your goal is to identify the candidate's projects that best demonstrate their potential for a specific role, even if the connection isn't obvious. You are looking for the *best fit*, not a perfect keyword match.
+                You are a senior technical recruiter and talent strategist. Your goal is to identify the candidate's projects that best demonstrate their potential for a specific role, even if the connection isn't obvious. You are looking for the *best fit*, not a perfect keyword match.
 
-    **Target Job Keywords:** {', '.join(job_keywords)}
+                **Target Job Keywords:** {', '.join(job_keywords)}
 
-    **Candidate's Projects:**
-    {projects_context}
+                **Candidate's Projects:**
+                {projects_context}
 
-    **Your Task:** Select the top {max_projects} projects that are most relevant to the job keywords, following the evaluation criteria below.
+                **Your Task:** Select the top {max_projects} projects that are most relevant to the job keywords, following the evaluation criteria below.
 
-    **--- Evaluation Criteria ---**
-    You must evaluate relevance in the following order of priority:
+                **--- Evaluation Criteria ---**
+                You must evaluate relevance in the following order of priority:
 
-    1.  **High Relevance (Direct Match):**
-        *   The project's title, description, or technologies explicitly contain the job keywords.
-        *   Example: Job keyword is "API Development," and a project is titled "RESTful API for E-commerce."
+                1.  **High Relevance (Direct Match):**
+                    *   The project's title, description, or technologies explicitly contain the job keywords.
+                    *   Example: Job keyword is "API Development," and a project is titled "RESTful API for E-commerce."
 
-    2.  **Medium Relevance (Conceptual or Skill Match):**
-        *   The project uses different technologies to solve a similar *type* of problem. This shows adaptability.
-        *   Example: Job keyword is "AWS Lambda," but a project uses "Google Cloud Functions." Both are serverless computing and this project is highly relevant.
-        *   The project demonstrates a core *skill* from the keywords, even if the project's domain is different.
-        *   Example: Job keyword is "data analysis," and the project involves "Statistical Analysis of Sports Metrics." The skill is transferable and relevant.
+                2.  **Medium Relevance (Conceptual or Skill Match):**
+                    *   The project uses different technologies to solve a similar *type* of problem. This shows adaptability.
+                    *   Example: Job keyword is "AWS Lambda," but a project uses "Google Cloud Functions." Both are serverless computing and this project is highly relevant.
+                    *   The project demonstrates a core *skill* from the keywords, even if the project's domain is different.
+                    *   Example: Job keyword is "data analysis," and the project involves "Statistical Analysis of Sports Metrics." The skill is transferable and relevant.
 
-    3.  **Low Relevance:**
-        *   The project is in a completely unrelated domain and uses unrelated technology. Avoid selecting these unless no High or Medium relevance projects exist.
+                3.  **Low Relevance:**
+                    *   The project is in a completely unrelated domain and uses unrelated technology. Avoid selecting these unless no High or Medium relevance projects exist.
 
-    **--- Decision Rules ---**
-    1.  **Prioritize Nuance:** Your primary goal is to find projects with **High** or **Medium** relevance. Do not be overly harsh; value conceptual and skill-based matches.
-    2.  **Tie-Breaking:** If you find more than {max_projects} relevant projects, select the ones that appear most technically complex, have the biggest business impact, or are described in the most detail.
-    3.  **Fallback Plan:** If you find NO High or Medium relevance projects, use the "Tie-Breaking" rule on the entire list to select the {max_projects} most impressive projects overall.
-    4.  **No Duplicates:** Do not select projects that describe the same work.
+                **--- Decision Rules ---**
+                1.  **Prioritize Nuance:** Your primary goal is to find projects with **High** or **Medium** relevance. Do not be overly harsh; value conceptual and skill-based matches.
+                2.  **Tie-Breaking:** If you find more than {max_projects} relevant projects, select the ones that appear most technically complex, have the biggest business impact, or are described in the most detail.
+                3.  **Fallback Plan:** If you find NO High or Medium relevance projects, use the "Tie-Breaking" rule on the entire list to select the {max_projects} most impressive projects overall.
+                4.  **No Duplicates:** Do not select projects that describe the same work.
 
-    **--- Output Format ---**
-    Your response MUST be a valid JSON object with a single key, "selected_project_ids", containing a list of the chosen project ID strings.
-    Example: {{"selected_project_ids": ["Project2", "Project5"]}}
-    """
+                **--- Output Format ---**
+                Your response MUST be a valid JSON object with a single key, "selected_project_ids", containing a list of the chosen project ID strings.
+                Example: {{"selected_project_ids": ["Project2", "Project5"]}}
+                """
 
             # Call LLM and process response
             response = self.client.chat.completions.create(
@@ -391,7 +528,7 @@ class ResumeRetailorWithJD:
                 response_format={"type": "text"}
             )
             self.log_llm_usage(response, "job_title")
-            title = response.choices[0].message.content.strip().strip('"')
+            title = response.choices[0].message.content.strip().strip('"\'')
             return title if title else candidate.get('title', '')
         except Exception as e:
             print(f"Error generating job title: {str(e)}", file=sys.stderr)
@@ -400,52 +537,45 @@ class ResumeRetailorWithJD:
 
     def generate_professional_summary(self, candidate: Dict) -> str:
         """
-        Always generates a professional summary (4-5 lines) in a neutral, impactful, professional style, without personal pronouns.
+        Generates a concise, professional summary (3-4 lines) in a neutral, impactful style,
+        avoiding technical jargon and focusing on the candidate's overall value.
         """
         experience_titles = [exp.get('title') for exp in candidate.get('experience', []) if exp.get('title')]
-        experience_summary = f"Career path includes roles like: {', '.join(experience_titles)}." if experience_titles else ""
-        project_titles = [p.get('title') for p in candidate.get('projects', []) if p.get('title')]
-        project_summary = f"Key projects include: {', '.join(project_titles)}." if project_titles else ""
-        skills_summary = ', '.join([str(s) for s in candidate.get('skills', [])[:15] if s])
+        experience_summary = f"Career path includes roles such as: {', '.join(experience_titles)}." if experience_titles else ""
+        skills_summary = ', '.join([str(s) for s in candidate.get('skills', [])[:10] if s]) # Limit to 10 key skills
 
         prompt = f"""
-        You are a top-tier executive resume writer and career strategist with over 20 years of experience in recruiting and hiring for Fortune 500 companies. Your task is to write a powerful 3–4 sentence professional summary that immediately captures a hiring manager's attention and conveys the candidate's value proposition.
-        Follow these expert guidelines precisely:
-        Candidate Context:
-        Professional Title: {candidate.get('title', 'N/A')}
-        Career Stage: {candidate.get('career_stage', 'Experienced Professional')} #(Options: Entry-Level, Mid-Career, Senior Leader, Executive, Career Changer)
-        Years of Experience: {candidate.get('years_experience', 'N/A')}
-        Top Skills (up to 15): {skills_summary}
-        Key Roles & Experience: {experience_summary}
-        Major Projects & Outcomes: {project_summary}
+        As an expert resume writer, create a 3-4 sentence professional summary that is clear, concise, and compelling.
+        Focus on the candidate's professional identity and key strengths, avoiding overly technical terms and detailed metrics.
 
-        1. Adaptive Writing Strategy:
-        For Senior Leader/Executive: Start with a powerful statement about leadership scope or strategic impact. Emphasize budget management, team leadership, P&L responsibility, and market-level outcomes.
-        For Mid-Career/Experienced Professional: Lead with years of experience and core expertise. Focus on quantifiable achievements and proven skills directly relevant to the professional title.
-        For Entry-Level: Focus on academic background, key technical skills, and internship or project-based outcomes. Highlight ambition, core competencies, and a strong understanding of foundational principles.
-        For Career Changer: Bridge the past and present. Start by stating the target professional title, then connect relevant skills from previous roles to the new field, emphasizing transferable achievements.
+        **Candidate Information:**
+        - **Professional Title:** {candidate.get('title', 'N/A')}
+        - **Years of Experience:** {candidate.get('years_experience', 'N/A')}
+        - **Key Skills:** {skills_summary}
+        - **Past Roles:** {experience_summary}
 
-        2. Core Writing Requirements:
-        Length & Structure: Exactly 3–4 sentences, each delivering a distinct and impactful point.
-        Tone & Language: Use an authoritative, factual, and confident tone. Employ active-voice verbs (e.g., "architected," "spearheaded," "revitalized"). Do not use personal pronouns ("I," "me," "my").
-        Content & Focus:
-        Sentence 1: The Hook. Open with the candidate's professional identity, incorporating their title and years of experience (or for career changers, their target title).
-        Sentence 2: The Expertise. Detail 2-3 core areas of functional expertise (e.g., "intelligent systems design," "workflow automation," "strategic AI implementation"), not just a list of technologies.
-        Sentence 3: The Proof. Showcase a major achievement, quantifying it with metrics. If metrics are not available, describe the business outcome or scope of the achievement (e.g., "streamlined recruitment processes by developing a novel AI tool").
-        Sentence 4: The Value & Impact. Connect the candidate's work to broader business value. Explain how their contributions have driven growth, improved processes, or supported strategic goals. Conclude with a statement of their overall capability.
+        **Guidelines:**
 
-        3. Accuracy & Formatting:
-        Fact-Based: Do not invent facts or skills. Base the summary exclusively on the provided Candidate Context.
-        Clean Output: Do not add headers, labels, or quotation marks. The output must be a single, continuous paragraph.
-        
-        4. Strategic Abstraction of Technical Details (New Guideline):
-        Translate, Don't List: Your primary goal is to translate technical skills into business capabilities. Instead of listing specific frameworks or languages, describe what the candidate does with them.
-        Instead of: "Proficient in Python, Flask, FastAPI, LangChain, and Hugging Face..."
-        Aim for: "Expertise in developing and deploying scalable AI solutions and intelligent automation systems..."
-        Focus on Business Problems, Not Technical Architecture: Describe projects based on the business problem they solved or the value they created.
-        Instead of: "Architected an OpenAI-Enhanced Automated Resume Tailoring Pipeline integrating Microsoft Teams..."
-        Aim for: "Spearheaded the development of an AI-driven talent acquisition tool that automated resume processing and enhanced candidate engagement..."
-        General Principle: Emphasize the "what" (the capability) and the "why" (the business impact) over the "how" (the specific tools). A touch of technical context is good for credibility, but the focus must remain on strategic contribution."""
+        1.  **Keep it Simple and Direct:** Use clear and straightforward language. The summary should be easy for anyone to understand, not just a technical hiring manager.
+
+        2.  **Focus on the Person:** Describe the candidate's professional profile. Instead of listing many technologies, describe the type of professional they are.
+            *   **Instead of:** "Proficient in Python, Flask, FastAPI, and LangChain..."
+            *   **Aim for:** "A technology professional with a background in developing and implementing software solutions."
+
+        3.  **Summarize, Don't List:**
+            *   **Sentence 1: Introduction.** Start with the professional title and years of experience to establish their identity.
+            *   **Sentence 2: Core Strengths.** Mention 2-3 key areas of expertise in broad terms (e.g., "skilled in project management and strategic planning").
+            *   **Sentence 3: Professional Attributes.** Highlight key personal attributes or a notable career achievement in a non-technical way (e.g., "Known for strong problem-solving skills and a collaborative approach" or "Successfully led key projects from concept to completion").
+            *   **Sentence 4 (Optional): Career Goal.** If applicable, add a forward-looking statement about their career interests.
+
+        4.  **Avoid Jargon and Metrics:** Do not use highly technical terms or specific performance metrics. The goal is a high-level, readable summary.
+
+        **Example Output Style:**
+
+        "A seasoned Project Manager with over 10 years of experience in the tech industry. Skilled in leading cross-functional teams and managing complex project lifecycles. Recognized for driving process improvements and consistently delivering projects on time. A dedicated professional committed to achieving organizational goals."
+
+        Please generate a summary based on these guidelines.
+        """
 
         try:
             response = self.client.chat.completions.create(
@@ -458,14 +588,13 @@ class ResumeRetailorWithJD:
                 response_format={"type": "text"}
             )
             self.log_llm_usage(response, "summary")
-            summary = response.choices[0].message.content.strip()
+            summary = response.choices[0].message.content.strip().strip('"\'')
             
             # ✅ CORRECTED LOGIC: Only fallback if the summary is completely empty.
             if not summary:
                 return (
                     f"Professional background includes roles such as {', '.join(experience_titles)}. "
                     f"Demonstrated expertise in {skills_summary}. "
-                    f"Projects delivered: {', '.join(project_titles)}. "
                     f"Recognized for reliability and technical proficiency."
                 )
             return summary
@@ -478,7 +607,6 @@ class ResumeRetailorWithJD:
             return (
                 f"Professional background includes roles such as {', '.join(experience_titles)}. "
                 f"Demonstrated expertise in {skills_summary}. "
-                f"Projects delivered: {', '.join(project_titles)}. "
                 f"Recognized for reliability and technical proficiency."
             )
     
@@ -500,6 +628,161 @@ class ResumeRetailorWithJD:
         
         # Limit to top 3-5 most relevant matching keywords to avoid skill inflation
         return matching_keywords[:5]
+    
+    def _intelligently_filter_skills(self, original_skills: list, job_keywords: Set[str], candidate: Dict) -> list:
+        """
+        Intelligently filter and prioritize skills using LLM to select the most relevant ones.
+        Returns a curated list of 12-15 most relevant skills.
+        """
+        if not original_skills or len(original_skills) <= 20:
+            return original_skills  # No filtering needed if already small enough
+        
+        # Extract candidate context for LLM analysis
+        experience_summary = []
+        for exp in candidate.get('experience', []):
+            experience_summary.append(f"- {exp.get('title', '')} at {exp.get('company', '')}: {exp.get('description', '')[:200]}")
+        
+        project_summary = []
+        for proj in candidate.get('projects', []):
+            project_summary.append(f"- {proj.get('title', '')}: {proj.get('description', '')[:200]}")
+        
+        candidate_context = f"""
+        **Professional Title:** {candidate.get('title', 'N/A')}
+        **Years of Experience:** {candidate.get('years_experience', 'N/A')}
+        
+        **Work Experience:**
+        {chr(10).join(experience_summary) if experience_summary else 'None provided'}
+        
+        **Key Projects:**
+        {chr(10).join(project_summary) if project_summary else 'None provided'}
+        """
+        
+        job_keywords_str = ', '.join(list(job_keywords)[:10])  # Limit to top 10 keywords
+        all_skills_str = ', '.join(original_skills)
+        
+        prompt = f"""
+        You are an expert technical recruiter and resume strategist. Your task is to intelligently select the most relevant skills from a candidate's skill list based on their background and the job requirements.
+
+        **Candidate Profile:**
+        {candidate_context}
+
+        **Job Keywords/Requirements:**
+        {job_keywords_str}
+
+        **All Available Skills:**
+        {all_skills_str}
+
+        **Selection Criteria (in order of priority):**
+        1. **Direct Job Match:** Skills that directly match the job keywords
+        2. **Project Relevance:** Skills demonstrated in the candidate's projects
+        3. **Experience Alignment:** Skills relevant to their work experience
+        4. **Technical Depth:** Core technical skills that show expertise
+        5. **Industry Relevance:** Skills that are valuable in their field
+
+        **Instructions:**
+        - Select 20-25 skills maximum
+        - Prioritize skills that are both in the job requirements AND demonstrated in their background
+        - Include a mix of technical and soft skills if relevant
+        - Avoid redundant or overly specific skills
+        - Focus on skills that tell a coherent story about the candidate's capabilities
+
+        **Return Format:**
+        Return ONLY a comma-separated list of selected skills, nothing else.
+        Example: "Python, JavaScript, React, AWS, Docker, Git, Agile, Leadership, Problem Solving"
+
+        **Selected Skills:**
+        """
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.deployment_name,
+                messages=[
+                    {"role": "system", "content": "You are a senior technical recruiter specializing in skill assessment and resume optimization."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                response_format={"type": "text"}
+            )
+            self.log_llm_usage(response, "skills_filtering")
+            
+            selected_skills_text = response.choices[0].message.content.strip().strip('"\'')
+            
+            # Parse the comma-separated response
+            selected_skills = [skill.strip() for skill in selected_skills_text.split(',') if skill.strip()]
+            
+            # Validate that all selected skills exist in the original list (case-insensitive)
+            original_skills_lower = {skill.lower(): skill for skill in original_skills}
+            validated_skills = []
+            
+            for selected_skill in selected_skills:
+                # Try exact match first
+                if selected_skill in original_skills:
+                    validated_skills.append(selected_skill)
+                # Try case-insensitive match
+                elif selected_skill.lower() in original_skills_lower:
+                    validated_skills.append(original_skills_lower[selected_skill.lower()])
+                # Try partial match for variations
+                else:
+                    for original_skill in original_skills:
+                        if selected_skill.lower() in original_skill.lower() or original_skill.lower() in selected_skill.lower():
+                            validated_skills.append(original_skill)
+                            break
+            
+            # Remove duplicates while preserving order
+            final_skills = []
+            seen = set()
+            for skill in validated_skills:
+                if skill.lower() not in seen:
+                    final_skills.append(skill)
+                    seen.add(skill.lower())
+            
+            # Ensure we have a reasonable number of skills
+            if len(final_skills) < 15:
+                # If LLM selected too few, add some original skills back
+                remaining_skills = [s for s in original_skills if s.lower() not in seen]
+                final_skills.extend(remaining_skills[:15 - len(final_skills)])
+            elif len(final_skills) > 25:
+                # If LLM selected too many, trim to 25
+                final_skills = final_skills[:25]
+            
+            return final_skills
+            
+        except Exception as e:
+            print(f"Error in intelligent skills filtering: {str(e)}", file=sys.stderr)
+            # Fallback to original logic
+            return self._fallback_skills_filtering(original_skills, job_keywords)
+    
+    def _fallback_skills_filtering(self, original_skills: list, job_keywords: Set[str]) -> list:
+        """
+        Fallback skills filtering when LLM-based filtering fails.
+        Uses simple keyword matching and prioritization.
+        """
+        if not original_skills:
+            return []
+        
+        # Create priority categories
+        job_keywords_lower = {k.lower() for k in job_keywords}
+        original_skills_lower = {s.lower(): s for s in original_skills}
+        
+        # Category 1: Direct job keyword matches
+        direct_matches = [original_skills_lower[k] for k in job_keywords_lower if k in original_skills_lower]
+        
+        # Category 2: Skills that contain job keywords
+        partial_matches = []
+        for skill in original_skills:
+            skill_lower = skill.lower()
+            if any(keyword in skill_lower for keyword in job_keywords_lower):
+                if skill not in direct_matches:
+                    partial_matches.append(skill)
+        
+        # Category 3: Remaining skills
+        remaining_skills = [s for s in original_skills if s not in direct_matches and s not in partial_matches]
+        
+        # Combine with limits
+        prioritized_skills = direct_matches + partial_matches + remaining_skills
+        
+        # Return top 20 skills
+        return prioritized_skills[:20]
     
     def retailor_resume_with_jd(self, original_resume):
         safe_resume = self.convert_objectid_to_str(original_resume)
@@ -528,21 +811,31 @@ class ResumeRetailorWithJD:
             safe_resume["summary"] = self.generate_professional_summary(safe_resume)
 
             original_skills = list(safe_resume.get("skills", []))
+            
+            # Use intelligent skills filtering to select the most relevant skills
+            filtered_skills = self._intelligently_filter_skills(original_skills, job_keywords, safe_resume)
+            
+            # Add any job keywords that aren't already in the filtered skills
             candidate_text = self._extract_candidate_text(safe_resume)
-            matching_keywords = self._find_matching_keywords(job_keywords, original_skills, candidate_text)
-
-            job_keywords_lower = {k.lower() for k in job_keywords}
-            original_skills_lower = {s.lower(): s for s in original_skills}
-            matching_skills = [original_skills_lower[k] for k in job_keywords_lower if k in original_skills_lower]
-            remaining_skills = [s for s in original_skills if s.lower() not in job_keywords_lower]
-
-            prioritized_skills = matching_skills + matching_keywords + remaining_skills
-
-            # Ensure all skills are strings and not None or empty, and handle non-string types robustly
+            matching_keywords = self._find_matching_keywords(job_keywords, filtered_skills, candidate_text)
+            
+            # Combine filtered skills with matching keywords
+            final_skills = filtered_skills + matching_keywords
+            
+            # Ensure all skills are strings and not None or empty
             def safe_skill(skill):
                 return skill is not None and str(skill).strip() != ""
-            final_skills = [str(skill) for skill in prioritized_skills if safe_skill(skill)]
-            safe_resume["skills"] = final_skills[:18]
+            final_skills = [str(skill) for skill in final_skills if safe_skill(skill)]
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_skills = []
+            for skill in final_skills:
+                if skill.lower() not in seen:
+                    unique_skills.append(skill)
+                    seen.add(skill.lower())
+            
+            safe_resume["skills"] = unique_skills[:25]  # Limit to 25 for optimal resume length
 
         # Remove 'keywords' field before returning
         safe_resume.pop("keywords", None)
