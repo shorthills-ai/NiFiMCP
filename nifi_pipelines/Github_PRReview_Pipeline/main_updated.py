@@ -18,7 +18,7 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 # --- Constants ---
-api_key = "AIzaSyAOCih46rdkaoKLyRqeNEA7xzYr7Hzs7Co"
+api_key = ""
 model_name = "gemini-2.5-pro-preview-05-06"
 INPUT_TOKEN_COST = 1.25 / 1_000_000
 OUTPUT_TOKEN_COST = 10.0 / 1_000_000
