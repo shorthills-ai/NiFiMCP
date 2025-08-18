@@ -1,0 +1,36 @@
+debug Telemetry: agents-playground-cli/cliStart {"cleanProperties":{"isExec":"true","argv":"<REDACTED: user-file-path>/teamsapptester,start"}}
+
+log Listening on 56150
+log Microsoft 365 Agents Playground is being launched for you to debug the app: http://localhost:56150
+debug started web socket client
+debug started web socket client
+log Waiting for connection of endpoint: http://127.0.0.1:3978/api/messages
+log waiting for 1 resources: http://127.0.0.1:3978/api/messages
+debug Telemetry: agents-playground-server/error {"cleanProperties":{"stack":"\"Error: Conversation not found\\n    at 23683 (<REDACTED: user-file-path>:2:1401718)\\n    at __webpack_require__ (<REDACTED: user-file-path>:8:3085)\\n    at 91964 (<REDACTED: user-file-path>:5:1090769)\\n    at __webpack_require__ (<REDACTED: user-file-path>:8:3085)\\n    at 40862 (<REDACTED: user-file-path>:2:1932533)\\n    at __webpack_require__ (<REDACTED: user-file-path>:8:3085)\\n    at 87783 (<REDACTED: user-file-path>:5:930466)\\n    at __webpack_require__ (<REDACTED: user-file-path>:8:3085)\\n    at <REDACTED: user-file-path>:8:3986\\n    at <REDACTED: user-file-path>:8:4036\"","message":"\"Conversation not found\"","code":"\"ConversationNotFound\""}}
+
+debug Telemetry: agents-playground-server/error {"cleanProperties":{"stack":"\"Error: Conversation not found\\n    at ApiError.wrapError (<REDACTED: user-file-path>:2:1401284)\\n    at ConversationApiValidator.validateRequestConversationIdParams (<REDACTED: user-file-path>:2:1361754)\\n    at ConversationApiValidator.validateCreateMessageRequest (<REDACTED: user-file-path>:2:1358093)\\n    at createMessage (<REDACTED: user-file-path>:5:184897)\\n    at Layer.handleRequest (<REDACTED: user-file-path>:2:2620672)\\n    at next (<REDACTED: user-file-path>:2:1755969)\\n    at <REDACTED: user-file-path>:2:1618957\\n    at AsyncResource.runInAsyncScope (node:async_hooks:203:9)\\n    at invokeCallback (<REDACTED: user-file-path>:2:2602941)\\n    at done (<REDACTED: user-file-path>:2:2603008)\"","message":"\"Conversation not found\"","code":"\"ConversationNotFound\"","statusCode":"404"}}
+
+debug Telemetry: agents-playground-server/error {"cleanProperties":{"stack":"\"Error: Conversation not found\\n    at ApiError.wrapError (<REDACTED: user-file-path>:2:1401284)\\n    at ConversationApiValidator.validateRequestConversationIdParams (<REDACTED: user-file-path>:2:1361754)\\n    at ConversationApiValidator.validateCreateMessageRequest (<REDACTED: user-file-path>:2:1358093)\\n    at createMessage (<REDACTED: user-file-path>:5:184897)\\n    at Layer.handleRequest (<REDACTED: user-file-path>:2:2620672)\\n    at next (<REDACTED: user-file-path>:2:1755969)\\n    at <REDACTED: user-file-path>:2:1618957\\n    at AsyncResource.runInAsyncScope (node:async_hooks:203:9)\\n    at invokeCallback (<REDACTED: user-file-path>:2:2602941)\\n    at done (<REDACTED: user-file-path>:2:2603008)\"","message":"\"Conversation not found\"","code":"\"ConversationNotFound\"","statusCode":"404"}}
+
+log wait-on(650459) Timed out waiting for: http://127.0.0.1:3978/api/messages; exiting with error
+debug Telemetry: agents-playground-server/error {"cleanProperties":{"stack":"\"Error: Timed out waiting for: http:<REDACTED: user-file-path>:3978<REDACTED: user-file-path>:2:1635449\\n    at doInnerSub (<REDACTED: user-file-path>:2:2860126)\\n    at outerNext (<REDACTED: user-file-path>:2:2859978)\\n    at OperatorSubscriber._this._next (<REDACTED: user-file-path>:2:2981206)\\n    at Subscriber.next (<REDACTED: user-file-path>:5:880805)\\n    at AsyncAction.<anonymous> (<REDACTED: user-file-path>:5:951552)\\n    at AsyncAction._execute (<REDACTED: user-file-path>:2:378847)\\n    at AsyncAction.execute (<REDACTED: user-file-path>:2:378620)\\n    at AsyncScheduler.flush (<REDACTED: user-file-path>:5:239529)\\n    at listOnTimeout (node:internal/timers:569:17)\"","message":"\"Timed out waiting for: http:<REDACTED: user-file-path>:3978/api/messages\""}}
+
+debug Telemetry: agents-playground-server/getConfig {"cleanProperties":{"internalConfig":"{\"locale\":\"en-US\",\"localTimezone\":\"Asia/Calcutta\",\"channelId\":\"emulator\"}"}}
+
+debug Telemetry: agents-playground-server/error {"cleanProperties":{"stack":"\"Error: connect ECONNREFUSED 127.0.0.1:3978\\n    at exports.UserBotError (<REDACTED: user-file-path>:2:1402531)\\n    at ConversationUpdateUserBotAccessor.handleAxiosError (<REDACTED: user-file-path>:2:2380152)\\n    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)\\n    at async ConversationUpdateUserBotAccessor.sendActivity (<REDACTED: user-file-path>:2:2379414)\\n    at async ConversationUpdateUserBotAccessor.sendInstallationMemberAddedActivity (<REDACTED: user-file-path>:5:403464)\"","message":"\"connect ECONNREFUSED 127.0.0.1:3978\"","code":"\"UserBotError\""}}
+
+log InternalServiceError: connect ECONNREFUSED 127.0.0.1:3978
+    at exports.UserBotError (/home/shtlp_0046/.fx/bin/testTool/0.2.14/node_modules/@microsoft/teams-app-test-tool/dist/index.js:2:1402531)
+    at ConversationUpdateUserBotAccessor.handleAxiosError (/home/shtlp_0046/.fx/bin/testTool/0.2.14/node_modules/@microsoft/teams-app-test-tool/dist/index.js:2:2380152)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async ConversationUpdateUserBotAccessor.sendActivity (/home/shtlp_0046/.fx/bin/testTool/0.2.14/node_modules/@microsoft/teams-app-test-tool/dist/index.js:2:2379414)
+    at async ConversationUpdateUserBotAccessor.sendInstallationMemberAddedActivity (/home/shtlp_0046/.fx/bin/testTool/0.2.14/node_modules/@microsoft/teams-app-test-tool/dist/index.js:5:403464) {
+  code: 'UserBotError',
+  innerHttpError: undefined
+}
+debug stopping web socket client
+debug stopping web socket client
+debug started web socket client
+debug started web socket client
+log Waiting for connection of endpoint: http://127.0.0.1:3978/api/messages
+log waiting for 1 resources: http://127.0.0.1:3978/api/messages
