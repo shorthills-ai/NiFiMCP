@@ -14,7 +14,7 @@ today_str = datetime.date.today().strftime("%B %d, %Y")
 week_str = f"{ (datetime.date.today() - datetime.timedelta(days=7)).strftime("%B %d, %Y") } - {today_str }"
 
 base_dir = Path(__file__).resolve().parent
-json_path = base_dir / "ai_news.json"
+json_path = base_dir / "filtered_ai_news.json"
 repo_json_path = base_dir / "trending_repos.json"
 
 # Fetch recipients
@@ -33,33 +33,35 @@ def get_news_highlights(json_path):
     """Fetches AI news highlights from json file generated after scraping/searching for AI news."""
     highlights = []
     titles = []
+    contents = []
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
     except FileNotFoundError:
-        return "Error: ai_news.json not found."
+        return "Error: filtered_ai_news.json not found."
     except json.JSONDecodeError:
-        return "Error: Could not decode ai_news.json."
+        return "Error: Could not decode filtered_ai_news.json."
 
     if "articles" in data and isinstance(data["articles"], list):
         for i, article in enumerate(data["articles"], 1):
             title = article.get("title", "N/A")
-            summary = article.get("summary", "N/A")
             source_url = article.get("source_url", "N/A")
+            content = article.get("content", "N/A")
             
-            highlight_entry = f"<em>🗞️{title}</em><br>"
-            highlight_entry += f"➔ Summary: {summary}<br>"
-            highlight_entry += f"➔ Source: <a href={source_url}>{source_url}</a><br><br>"
+            highlight_entry = f"<a href={source_url}><em>🗞️{title}</em></a><br>"
+            highlight_entry += f"➔ {content}<br>"
             highlights.append(highlight_entry)
             titles.append(title)
+            contents.append(content)
             
     if not highlights:
         return "No articles found or articles are not in the expected format."
     
     highlights_joined = "\n\n".join(highlights)
     titles_joined = "\n".join(titles)
+    contents_joined = "\n".join(contents)
 
-    return highlights_joined, titles_joined
+    return highlights_joined, titles_joined, contents_joined
 
 def extract_takeaways_and_topics(titles_combined):
     """
@@ -79,7 +81,7 @@ def extract_takeaways_and_topics(titles_combined):
 
     # Build prompt
     prompt = f"""
-        You are an AI assistant tasked with extracting content for AI news. Create key takeaways and topics found in the input content.
+        You are an AI assistant tasked with extracting content for AI news. Create list of topics found in the input content.
 
         Here is the scraped content:
 
@@ -87,19 +89,9 @@ def extract_takeaways_and_topics(titles_combined):
 
         Note: Provide a clear, concise, and structured output as per the format.
         Follow this output format:
-
-<h2>✏️ Key Takeaways</h2>
-<p>
-<ul>
-<li> [Actionable takeaway or insight 1] </li>
-<li> [Actionable takeaway or insight 2] </li>
-<li> [Actionable takeaway or insight 3] </li>
-</ul>
-</p>
-
 <h2>🗂️ Topics Covered</h2>
 <p>
-<li>[List of topics or keywords extracted from the input]</li>
+"Set of topics covered in the news separated by commas."
 <p>
 """
 
@@ -122,16 +114,14 @@ def sort_highlights(highlights_joined):
     Arranges the highlights into different sections based on topics.
     """
     prompt = f"""
-You are an expert AI assistant tasked with curating an internal AI news digest for employees. Your goal is to make the news easy to understand by organizing it thematically.
-
 You will be given a list of news highlights. Your task is to analyze these highlights and group them into logical sections based on recurring technologies, products, protocols, or major themes.
 
 **Instructions:**
 
-1.  **Identify Key Themes:** Read through all the highlights and identify the main subjects. Look for specific, recurring keywords that define a topic, such as "Model Context Protocol (MCP)", "A2A", "Google", "Openai", "Antropic", "Llama" or "AI Agents".
+1.  **Identify Key Themes:** Read through all the highlights and identify the main subjects. Look for specific, recurring keywords that define a topic, from one of "Model Context Protocol (MCP)", "A2A", "Google", "Openai", "Antropic", "Llama" or "AI Agents", "AI Tools".
 2.  **Create Section Headings:** Based on these themes, create clear and descriptive headings. Use html for the headings (e.g., '<h3>Model Context Protocol (MCP)</h3>'). The headings should be based on the specific technologies or products themselves.
 3.  **Group the Highlights:** Place each original highlight under the most appropriate section heading.
-4.  **Preserve Original Content:** Copy the highlights into the sections *exactly* as they are provided, including their original number, title, summary, and source URL. Do not alter, re-summarize, or re-number them.
+4.  **Preserve Original Content:** Copy the highlights into the sections *exactly* as they are provided, including the content, its style and structure. Do not alter, re-summarize, or number them.
 5.  **Be Logical:** Group items that are clearly related. For example, all news about MCP servers under single MCP-related heading, all news from google models and tools under google, similarly for any other organization.
 6.  **Handle Other News:** For highlights that don't fit into a specific, recurring technology group, create a broader category '<h3>AI Developments</h3>'.
 
@@ -141,8 +131,7 @@ Here are the news highlights you need to sort:
 {highlights_joined}
 ---
 
-Please provide the sorted and categorized list of highlights below. The final output should be only the categorized news with no extra text or backtick, ready for a newsletter.
-"""
+Please provide the sorted and categorized list of highlights below. The final output should be only the categorized news with no extra text or backtick, ready for a newsletter"""
 
     messages = [
                 # The SystemMessage sets the overall context for the LLM's persona.
@@ -186,17 +175,99 @@ def get_trending_repositories(repo_json_path):
 
     return repositories_joined
 
+def generate_quiz(ai_summary: str) -> tuple[str, dict]:
+    """
+    Generates an interactive HTML quiz with radio buttons based on the AI news summary.
+
+    This function instructs an LLM to create a 10-question quiz in JSON format,
+    then builds a self-contained HTML file with embedded CSS and JavaScript
+    to provide immediate feedback to the user upon selecting a radio button.
+
+    Args:
+        ai_summary: A string containing the summarized content for the quiz.
+
+    Returns:
+        A tuple containing:
+        - interactive_quiz (str): The full HTML code for the interactive quiz.
+        - answer_key (dict): A dictionary mapping question numbers to correct answers (e.g., {1: 'A', 2: 'C'}).
+    """
+    
+    # 1. Updated prompt to request JSON output with answers (remains the same)
+    prompt = f"""
+        You are an AI quiz generator specializing in creating interactive learning content.
+        Your task is to create a quiz of 10 questions based on the provided content.
+
+        For each question, provide the question text, 4 multiple-choice options (A, B, C, D),
+        and identify the letter of the correct answer.
+
+        **IMPORTANT**: Respond ONLY with a valid JSON object. The JSON should be a list of objects,
+        where each object has the following keys:
+        - "question": A string for the question text.
+        - "options": An object with keys "A", "B", "C", "D".
+        - "answer": A string representing the key of the correct option (e.g., "A").
+
+        Do not include any other text, greetings, or explanations outside of the JSON object.
+
+        Here is the summarized content:
+        {ai_summary}
+
+        Example JSON output format:
+        [
+            {{
+                "question": "What is the capital of France?",
+                "options": {{
+                    "A": "Paris",
+                    "B": "London",
+                    "C": "Berlin",
+                    "D": "Madrid"
+                }},
+                "answer": "A"
+            }},
+            {{
+                "question": "What is the largest planet in our solar system?",
+                "options": {{
+                    "A": "Earth",
+                    "B": "Mars",
+                    "C": "Jupiter",
+                    "D": "Saturn"
+                }},
+                "answer": "C"
+            }}
+        ]
+    """
+    
+    messages = [
+        SystemMessage(content="You are an AI quiz generator specializing in JSON output."),
+        HumanMessage(content=prompt),
+    ]
+    response = llm.invoke(messages)
+    llm_output = response.content
+    cleaned_output = llm_output.replace("```json", "").replace("```", "").strip()
+
+    try:
+        quiz_data = json.loads(cleaned_output)
+        # Save the valid quiz_data to quiz.json
+        with open("quiz.json", "w", encoding="utf-8") as f:
+            json.dump(quiz_data, f, ensure_ascii=False, indent=2)
+    except json.JSONDecodeError:
+        raise ValueError("The LLM did not return valid JSON. Please check the input and try again.")
+
 def generate_email_content(json_path,repo_json_path):
     """
     Generates the email content with a summary of AI news.
     """
-    highlights_joined,titles_joined = get_news_highlights(json_path)
+    highlights_joined,titles_joined, contents_joined = get_news_highlights(json_path)
     topic_takeaways = extract_takeaways_and_topics(titles_joined)
 
     categorized_highlights = sort_highlights(highlights_joined)
 
     # get trending repositories
     trending_repos = get_trending_repositories(repo_json_path)
+
+    # generate quiz
+    generate_quiz(contents_joined)
+    # set quiz url
+    quiz = "<a href=http://104.208.162.61:8002/>Click here</a>"
 
 
     email_body = f"""<!DOCTYPE html>
@@ -287,6 +358,10 @@ def generate_email_content(json_path,repo_json_path):
         <br><br>
         <h2>📦 Trending repositories</h2>
         {trending_repos}
+
+        <br><br>
+        <h3>🕒🧪 Quick Quiz</h3>
+        {quiz}
 
         <div class="footer">
             Best regards,<br>
