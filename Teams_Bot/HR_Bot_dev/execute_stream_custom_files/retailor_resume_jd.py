@@ -6,16 +6,24 @@ import string
 from openai import AzureOpenAI
 import os
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv( )
+
+# Centralized env configuration
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
 
 class ResumeRetailorWithJD:
-    def __init__(self, azure_config: Dict[str, str]):
-
+    def __init__(self):
         self.client = AzureOpenAI(
-            api_key=azure_config.get('api_key'),
-            api_version=azure_config.get('api_version'),
-            azure_endpoint=azure_config.get('endpoint')
+            api_key=AZURE_OPENAI_API_KEY,
+            api_version=AZURE_OPENAI_API_VERSION,
+            azure_endpoint=AZURE_OPENAI_ENDPOINT
         )
-        self.deployment_name = azure_config.get('deployment')
+        self.deployment_name = AZURE_OPENAI_DEPLOYMENT
         self.input_cost_per_1k = 0.000165
         self.output_cost_per_1k = 0.000660
 
@@ -100,24 +108,24 @@ class ResumeRetailorWithJD:
         """
         prompt = f"""You are an expert business analyst specializing in industry classification. Your task is to identify the primary industry of a company based on its name and description.
 
-                **Company Information:**
-                - Company Name: "{company}"
-                - Description: "{description}"
+                    **Company Information:**
+                    - Company Name: "{company}"
+                    - Description: "{description}"
 
-                **Instructions:**
-                1. Analyze the company name and description to determine the primary industry.
-                2. Consider both explicit mentions and contextual clues.
-                3. Return ONLY the industry name in Title Case (e.g., "Finance", "Healthcare", "Technology").
-                4. If the industry is unclear or ambiguous, return "Unknown".
-                5. Use standard industry categories like: Finance, Healthcare, Technology, Retail, Manufacturing, Education, Consulting, Government, Nonprofit, Media, Real Estate, Energy, Transportation, Hospitality, Legal, etc.
+                    **Instructions:**
+                    1. Analyze the company name and description to determine the primary industry.
+                    2. Consider both explicit mentions and contextual clues.
+                    3. Return ONLY the industry name in Title Case (e.g., "Finance", "Healthcare", "Technology").
+                    4. If the industry is unclear or ambiguous, return "Unknown".
+                    5. Use standard industry categories like: Finance, Healthcare, Technology, Retail, Manufacturing, Education, Consulting, Government, Nonprofit, Media, Real Estate, Energy, Transportation, Hospitality, Legal, etc.
 
-                **Examples:**
-                - Company: "JPMorgan Chase", Description: "Financial services and banking" → "Finance"
-                - Company: "Mayo Clinic", Description: "Healthcare and medical services" → "Healthcare"
-                - Company: "Google", Description: "Technology and software development" → "Technology"
-                - Company: "Walmart", Description: "Retail and e-commerce" → "Retail"
+                    **Examples:**
+                    - Company: "JPMorgan Chase", Description: "Financial services and banking" → "Finance"
+                    - Company: "Mayo Clinic", Description: "Healthcare and medical services" → "Healthcare"
+                    - Company: "Google", Description: "Technology and software development" → "Technology"
+                    - Company: "Walmart", Description: "Retail and e-commerce" → "Retail"
 
-                Return the industry name:"""
+                    Return the industry name:"""
 
         try:
             response = self.client.chat.completions.create(
@@ -385,41 +393,41 @@ class ResumeRetailorWithJD:
 
             # Create prompt for LLM to evaluate project relevance
             prompt = f"""
-                You are a senior technical recruiter and talent strategist. Your goal is to identify the candidate's projects that best demonstrate their potential for a specific role, even if the connection isn't obvious. You are looking for the *best fit*, not a perfect keyword match.
+    You are a senior technical recruiter and talent strategist. Your goal is to identify the candidate's projects that best demonstrate their potential for a specific role, even if the connection isn't obvious. You are looking for the *best fit*, not a perfect keyword match.
 
-                **Target Job Keywords:** {', '.join(job_keywords)}
+    **Target Job Keywords:** {', '.join(job_keywords)}
 
-                **Candidate's Projects:**
-                {projects_context}
+    **Candidate's Projects:**
+    {projects_context}
 
-                **Your Task:** Select the top {max_projects} projects that are most relevant to the job keywords, following the evaluation criteria below.
+    **Your Task:** Select the top {max_projects} projects that are most relevant to the job keywords, following the evaluation criteria below.
 
-                **--- Evaluation Criteria ---**
-                You must evaluate relevance in the following order of priority:
+    **--- Evaluation Criteria ---**
+    You must evaluate relevance in the following order of priority:
 
-                1.  **High Relevance (Direct Match):**
-                    *   The project's title, description, or technologies explicitly contain the job keywords.
-                    *   Example: Job keyword is "API Development," and a project is titled "RESTful API for E-commerce."
+    1.  **High Relevance (Direct Match):**
+        *   The project's title, description, or technologies explicitly contain the job keywords.
+        *   Example: Job keyword is "API Development," and a project is titled "RESTful API for E-commerce."
 
-                2.  **Medium Relevance (Conceptual or Skill Match):**
-                    *   The project uses different technologies to solve a similar *type* of problem. This shows adaptability.
-                    *   Example: Job keyword is "AWS Lambda," but a project uses "Google Cloud Functions." Both are serverless computing and this project is highly relevant.
-                    *   The project demonstrates a core *skill* from the keywords, even if the project's domain is different.
-                    *   Example: Job keyword is "data analysis," and the project involves "Statistical Analysis of Sports Metrics." The skill is transferable and relevant.
+    2.  **Medium Relevance (Conceptual or Skill Match):**
+        *   The project uses different technologies to solve a similar *type* of problem. This shows adaptability.
+        *   Example: Job keyword is "AWS Lambda," but a project uses "Google Cloud Functions." Both are serverless computing and this project is highly relevant.
+        *   The project demonstrates a core *skill* from the keywords, even if the project's domain is different.
+        *   Example: Job keyword is "data analysis," and the project involves "Statistical Analysis of Sports Metrics." The skill is transferable and relevant.
 
-                3.  **Low Relevance:**
-                    *   The project is in a completely unrelated domain and uses unrelated technology. Avoid selecting these unless no High or Medium relevance projects exist.
+    3.  **Low Relevance:**
+        *   The project is in a completely unrelated domain and uses unrelated technology. Avoid selecting these unless no High or Medium relevance projects exist.
 
-                **--- Decision Rules ---**
-                1.  **Prioritize Nuance:** Your primary goal is to find projects with **High** or **Medium** relevance. Do not be overly harsh; value conceptual and skill-based matches.
-                2.  **Tie-Breaking:** If you find more than {max_projects} relevant projects, select the ones that appear most technically complex, have the biggest business impact, or are described in the most detail.
-                3.  **Fallback Plan:** If you find NO High or Medium relevance projects, use the "Tie-Breaking" rule on the entire list to select the {max_projects} most impressive projects overall.
-                4.  **No Duplicates:** Do not select projects that describe the same work.
+    **--- Decision Rules ---**
+    1.  **Prioritize Nuance:** Your primary goal is to find projects with **High** or **Medium** relevance. Do not be overly harsh; value conceptual and skill-based matches.
+    2.  **Tie-Breaking:** If you find more than {max_projects} relevant projects, select the ones that appear most technically complex, have the biggest business impact, or are described in the most detail.
+    3.  **Fallback Plan:** If you find NO High or Medium relevance projects, use the "Tie-Breaking" rule on the entire list to select the {max_projects} most impressive projects overall.
+    4.  **No Duplicates:** Do not select projects that describe the same work.
 
-                **--- Output Format ---**
-                Your response MUST be a valid JSON object with a single key, "selected_project_ids", containing a list of the chosen project ID strings.
-                Example: {{"selected_project_ids": ["Project2", "Project5"]}}
-                """
+    **--- Output Format ---**
+    Your response MUST be a valid JSON object with a single key, "selected_project_ids", containing a list of the chosen project ID strings.
+    Example: {{"selected_project_ids": ["Project2", "Project5"]}}
+    """
 
             # Call LLM and process response
             response = self.client.chat.completions.create(
@@ -857,7 +865,7 @@ class ResumeRetailorWithJD:
 def main():
     # Redirect stderr to log file for error tracking
     original_stderr = sys.stderr
-    log_file_path = "/home/nifi/nifi2/users/HR_Teams_Bot_Dev/llm_usage.log"
+    log_file_path = os.getenv("LLM_USAGE_LOG_PATH")
     try:
         with open(log_file_path, 'a') as log_file:
             sys.stderr = log_file
@@ -869,14 +877,7 @@ def main():
                 print(json.dumps({"error": f"Invalid JSON input: {str(e)}"}), file=sys.stderr)
                 sys.exit(1)
 
-            azure_config = {
-                "api_key": os.getenv("AZURE_API_KEY"),
-                "api_version": os.getenv("AZURE_API_VERSION"),
-                "endpoint": os.getenv("AZURE_ENDPOINT"),
-                "deployment": os.getenv("AZURE_DEPLOYMENT")
-            }
-
-            retailor = ResumeRetailorWithJD(azure_config)
+            retailor = ResumeRetailorWithJD()
 
             try:
                 retailored_resume = retailor.retailor_resume_with_jd(resume_data)

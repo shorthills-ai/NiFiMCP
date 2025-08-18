@@ -17,5 +17,5 @@ node_modules/
 
 # Dev tool directories
 /devTools/
-
 creds.txt
+Teams_Bot/HR_Bot_dev/elastic.crt

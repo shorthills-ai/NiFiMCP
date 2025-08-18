@@ -2,16 +2,19 @@
 import sys
 import json
 import os
+from dotenv import load_dotenv
 from openai import AzureOpenAI
 from typing import Dict, Set
 from datetime import datetime
 
+load_dotenv( )
+
 class CandidateScorer:
     def __init__(self):
-        api_key = os.getenv("AZURE_API_KEY")
-        api_version = os.getenv("AZURE_API_VERSION")
-        endpoint = os.getenv("AZURE_ENDPOINT")
-        deployment = os.getenv("AZURE_DEPLOYMENT")
+        api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        api_version = os.getenv("AZURE_OPENAI_API_VERSION")
+        endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
 
         if not api_key or not endpoint:
             raise ValueError("Missing required Azure credentials environment variables. Check NiFi processor configuration.")
@@ -134,7 +137,7 @@ class CandidateScorer:
 
 def main():
     original_stderr = sys.stderr
-    log_file_path = "/home/nifi/nifi2/users/HR_Teams_Bot_Dev/llm_usage.log"
+    log_file_path = os.getenv("LLM_USAGE_LOG_PATH")
     try:
         with open(log_file_path, 'a') as log_file:
             sys.stderr = log_file
