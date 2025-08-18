@@ -7,18 +7,18 @@ from urllib3.exceptions import InsecureRequestWarning
 from dotenv import load_dotenv
 import os
 
-# ✅ Load .env file from current directory
-load_dotenv()
+# ✅ Load .env file from a specific path
+load_dotenv( )
 
 
 # Suppress SSL warnings
 warnings.simplefilter('ignore', InsecureRequestWarning)
 
 
-cert_path=os.environ.get('CERT_PATH')
+cert_path = os.getenv('ELASTIC_CA_CERT')
 # Elasticsearch connection details
-elastic_url = os.environ.get('ELASTIC_URL')
-api_key = os.environ.get("ELASTIC_API")
+elastic_url = os.getenv('ELASTICSEARCH_URL2')
+api_key = os.getenv("ELASTIC_API_KEY")
 
 # Read keywords and job_description JSON from stdin
 try:

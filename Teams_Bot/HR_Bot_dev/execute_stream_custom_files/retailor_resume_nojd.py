@@ -5,21 +5,25 @@ from typing import List, Dict, Set, Tuple
 from openai import AzureOpenAI
 import sys
 import os
+from dotenv import load_dotenv
 from datetime import datetime
 
+load_dotenv( )
+
+# Centralized env configuration
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION")
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+
 class ResumeRetailorNoJD:
-    def __init__(self, azure_config: Dict[str, str]):
-        """
-        Initialize the resume retailor with Azure OpenAI configuration.
-        Args:
-            azure_config: Dictionary containing Azure OpenAI configuration
-        """
+    def __init__(self):
         self.client = AzureOpenAI(
-            api_key=azure_config.get('api_key'),
-            api_version=azure_config.get('api_version'),
-            azure_endpoint=azure_config.get('endpoint')
+            api_key=AZURE_OPENAI_API_KEY,
+            api_version=AZURE_OPENAI_API_VERSION,
+            azure_endpoint=AZURE_OPENAI_ENDPOINT
         )
-        self.deployment_name = azure_config.get('deployment')
+        self.deployment_name = AZURE_OPENAI_DEPLOYMENT
         self.input_cost_per_1k = 0.000165
         self.output_cost_per_1k = 0.000660
 
@@ -637,18 +641,12 @@ class ResumeRetailorNoJD:
 def main():
 
     original_stderr = sys.stderr
-    log_file_path = "/home/nifi/nifi2/users/HR_Teams_Bot_Dev/llm_usage.log"
+    log_file_path = os.getenv("LLM_USAGE_LOG_PATH")
     try:
         with open(log_file_path, 'a') as log_file:
             sys.stderr = log_file
-            azure_config = {
-                "api_key": os.getenv("AZURE_API_KEY"),
-                "api_version": os.getenv("AZURE_API_VERSION"),
-                "endpoint": os.getenv("AZURE_ENDPOINT"),
-                "deployment": os.getenv("AZURE_DEPLOYMENT")
-            }
             input_resume = json.load(sys.stdin)
-            retailor = ResumeRetailorNoJD(azure_config)
+            retailor = ResumeRetailorNoJD()
             retailored_resume = retailor.retailor_resume_no_jd(input_resume)
             print(json.dumps(retailored_resume, indent=2))
     except json.JSONDecodeError:

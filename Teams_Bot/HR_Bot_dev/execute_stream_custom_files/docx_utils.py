@@ -4,7 +4,7 @@ import os
 import re
 
 class DocxUtils:
-    TEMPLATE_PATH = "Resume_Final_draft.docx"
+    TEMPLATE_PATH = "/home/nifi/nifi2/HR_Bot/Resume_Final_draft.docx"
     @staticmethod
     def _split_to_bullets(text):
         # Split text on full stops, including handling cases like “e.g.” or decimal points
@@ -61,3 +61,4 @@ if __name__ == "__main__":
     except Exception as e:
         sys.stderr.write(f"Error in docx_utils CLI: {e}\n")
         sys.exit(1)
+        

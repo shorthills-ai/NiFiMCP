@@ -9,3 +9,4 @@ nifimcp.egg-info/
 nifi_chat_ui/system_prompt copy.md
 config.yaml
 .DS_Store
+Teams_Bot/HR_Bot_dev/elastic.crt

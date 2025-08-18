@@ -6,9 +6,8 @@ from urllib3.exceptions import InsecureRequestWarning
 from dotenv import load_dotenv
 import os
 
-# ✅ Load .env file from current directory
-load_dotenv()
-
+# ✅ Load .env file from a specific path
+load_dotenv( )
 
 warnings.simplefilter('ignore', InsecureRequestWarning)
 
@@ -16,10 +15,10 @@ def fetch_resume(identifier_type, identifier):
     """
     Fetches a resume from Elasticsearch based on the identifier type and value.
     """
-    cert_path=os.environ.get('CERT_PATH')
+    cert_path = os.getenv('ELASTIC_CA_CERT')
 # Elasticsearch connection details
-    elastic_url = os.environ.get('ELASTIC_URL')
-    api_key = os.environ.get("ELASTIC_API")
+    elastic_url = os.getenv('ELASTICSEARCH_URL2')
+    api_key = os.getenv("ELASTIC_API_KEY")
 
     headers = {
         "Content-Type": "application/json",
