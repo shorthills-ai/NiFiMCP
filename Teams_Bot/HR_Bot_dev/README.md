@@ -1,71 +1,144 @@
-# Overview of the Basic Bot template
+# HR Bot
 
-Examples of Microsoft Teams bots in everyday use include:
+A Microsoft Teams bot application designed to streamline HR operations through intelligent resume management, candidate search, and automated resume generation.
 
-- Bots that notify about build failures.
-- Bots that provide information about the weather or bus schedules.
-- Bots that provide travel information.
+## Overview
 
-A bot interaction can be a quick question and answer, or it can be a complex conversation. Being a cloud application, a bot can provide valuable and secure access to cloud services and corporate resources.
+HR Bot is a comprehensive Teams application that integrates with NiFi processors to provide automated HR services. It enables HR professionals to manage candidate resumes, search for qualified candidates, generate tailored resumes, and perform bulk operations through an intuitive chat interface.
 
-## Get started with the Basic Bot template
+## Features
 
-> **Prerequisites**
->
-> To run the Basic Bot template in your local dev machine, you will need:
->
-> - [Node.js](https://nodejs.org/), supported versions: 18, 20, 22
-> - [Microsoft 365 Agents Toolkit Visual Studio Code Extension](https://aka.ms/teams-toolkit) version 5.0.0 and higher or [Microsoft 365 Agents Toolkit CLI](https://aka.ms/teamsfx-toolkit-cli)
+### Core Functionality
+- **Resume Management**: Add, view, and delete candidate resumes
+- **Intelligent Search**: Find candidates by name, skills, or keywords
+- **Resume Generation**: Create tailored resumes with or without job descriptions
+- **Bulk Operations**: Upload multiple resumes from SharePoint folders
+- **Candidate Scoring**: AI-powered candidate evaluation and ranking
 
-> For local debugging using Microsoft 365 Agents Toolkit CLI, you need to do some extra steps described in [Set up your Microsoft 365 Agents Toolkit CLI for local debugging](https://aka.ms/teamsfx-cli-debugging).
+### Commands
 
-1. First, select the Microsoft 365 Agents Toolkit icon on the left in the VS Code toolbar.
-2. Press F5 to start debugging which launches your app in Microsoft 365 Agents Playground using a web browser. Select `Debug in Microsoft 365 Agents Playground`.
-3. The browser will pop up to open Microsoft 365 Agents Playground.
-4. You will receive a welcome message from the bot, and you can send anything to the bot to get an echoed response.
+| Command | Description | Usage |
+|---------|-------------|-------|
+| `/makeresume` | Generate or tailor a resume | `/makeresume <employee_id>` or `/makeresume <name> jd "job description"` |
+| `/search` | Search for candidates | `/search <query>` |
+| `/view` | View candidate resume | `/view <employee_id>` or `/view <name>` |
+| `/delete` | Delete candidate | `/delete <employee_id>` or `/delete name <name>` |
+| `/add` | Add new candidate | `/add <employee_id>` |
+| `/uploadfolder` | Bulk upload resumes | `/uploadfolder <sharepoint_folder_link>` |
+| `/help` | Show available commands | `/help` |
+| `/test` | Test connectivity | `/test` |
+| `/reset` | Reset conversation state | `/reset` |
 
-**Congratulations**! You are running an application that can now interact with users in Microsoft 365 Agents Playground:
+## Architecture
 
-![basic bot](./img/echo-bot.png)
+### Technology Stack
+- **Frontend**: Microsoft Teams Adaptive Cards
+- **Backend**: Node.js with Microsoft Agents Hosting
+- **Storage**: Memory-based conversation state
+- **Integration**: NiFi processors for backend operations
+- **Authentication**: Microsoft Graph API integration
+
+### System Components
+- **Teams Bot Interface**: Handles user interactions and displays information
+- **NiFi Integration**: Processes resume data and generates documents
+- **Graph API**: Manages OneDrive file operations
+- **Fallback System**: Ensures reliability with primary and backup NiFi endpoints
+
+## Installation
+
+### Prerequisites
+- Node.js 18, 20, or 22
+- Microsoft Teams account
+- NiFi processor endpoints
+- Microsoft Graph API access
+
+### Setup
+1. Clone the repository
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+3. Configure environment variables:
+   ```bash
+   PRIMARY_NIFI_URL=<primary_nifi_endpoint>
+   FALLBACK_NIFI_URL=<fallback_nifi_endpoint>
+   ```
+4. Start the application:
+   ```bash
+   npm start
+   ```
+
+### Development
+```bash
+npm run dev          # Start with nodemon
+npm run dev:teamsfx  # Start with Teams Toolkit
+```
+
+## Configuration
+
+### Environment Variables
+- `PRIMARY_NIFI_URL`: Primary NiFi processor endpoint
+- `FALLBACK_NIFI_URL`: Backup NiFi processor endpoint
+- Additional Graph API configuration as required
+
+### NiFi Integration
+The bot communicates with NiFi processors for:
+- Resume parsing and storage
+- Candidate search and scoring
+- Document generation
+- Bulk operations
+
+## Usage Examples
+
+### Adding a New Candidate
+```
+/add 12345
+[Bot prompts for SharePoint resume link]
+[User provides link]
+[Bot confirms and uploads]
+```
+
+### Generating a Tailored Resume
+```
+/makeresume John Doe jd "Senior Software Engineer with 5+ years experience in Node.js and React"
+```
+
+### Searching for Candidates
+```
+/search "Python developer with machine learning experience"
+```
+
+### Bulk Upload
+```
+/uploadfolder https://company.sharepoint.com/sites/hr/Shared%20Documents/Resumes
+```
+
+## Security Features
+
+- **Authentication**: Microsoft Teams authentication
+- **Authorization**: Role-based access control
+- **Data Privacy**: Secure handling of candidate information
+- **Audit Trail**: Conversation state management
+
+## Error Handling
+
+The bot includes comprehensive error handling for:
+- Network connectivity issues
+- Invalid user input
+- NiFi processor failures
+- File upload errors
+- Authentication failures
+
+## Performance
+
+- **Response Time**: Optimized for real-time interactions
+- **Scalability**: Memory-based state management
+- **Reliability**: Fallback endpoint support
+- **Caching**: Efficient data retrieval and storage
+
+## Support
+
+For technical support or feature requests, please contact the development team or create an issue in the repository.
 
 
-## What's included in the template
 
-| Folder       | Contents                                            |
-| - | - |
-| `.vscode`    | VSCode files for debugging                          |
-| `appPackage` | Templates for the application manifest        |
-| `env`        | Environment files                                   |
-| `infra`      | Templates for provisioning Azure resources          |
-
-The following files can be customized and demonstrate an example implementation to get you started.
-
-| File                                 | Contents                                           |
-| - | - |
-|`teamsBot.js`| Handles business logics for the echo bot.|
-|`index.js`|`index.js` is used to setup and configure the echo bot.|
-
-The following are Microsoft 365 Agents Toolkit specific project files. You can [visit a complete guide on Github](https://github.com/OfficeDev/TeamsFx/wiki/Teams-Toolkit-Visual-Studio-Code-v5-Guide#overview) to understand how Microsoft 365 Agents Toolkit works.
-
-| File                                 | Contents                                           |
-| - | - |
-|`m365agents.yml`|This is the main Microsoft 365 Agents Toolkit project file. The project file defines two primary things:  Properties and configuration Stage definitions. |
-|`m365agents.local.yml`|This overrides `m365agents.yml` with actions that enable local execution and debugging.|
-|`m365agents.testtool.yml`| This overrides `m365agents.yml` with actions that enable local execution and debugging in Microsoft 365 Agents Playground.|
-
-## Extend the Basic Bot template
-
-Following documentation will help you to extend the Basic Bot template.
-
-- [Add or manage the environment](https://learn.microsoft.com/microsoftteams/platform/toolkit/teamsfx-multi-env)
-- [Create multi-capability app](https://learn.microsoft.com/microsoftteams/platform/toolkit/add-capability)
-- [Add single sign on to your app](https://learn.microsoft.com/microsoftteams/platform/toolkit/add-single-sign-on)
-- [Access data in Microsoft Graph](https://learn.microsoft.com/microsoftteams/platform/toolkit/teamsfx-sdk#microsoft-graph-scenarios)
-- [Use an existing Microsoft Entra application](https://learn.microsoft.com/microsoftteams/platform/toolkit/use-existing-aad-app)
-- [Customize the app manifest](https://learn.microsoft.com/microsoftteams/platform/toolkit/teamsfx-preview-and-customize-app-manifest)
-- Host your app in Azure by [provision cloud resources](https://learn.microsoft.com/microsoftteams/platform/toolkit/provision) and [deploy the code to cloud](https://learn.microsoft.com/microsoftteams/platform/toolkit/deploy)
-- [Collaborate on app development](https://learn.microsoft.com/microsoftteams/platform/toolkit/teamsfx-collaboration)
-- [Set up the CI/CD pipeline](https://learn.microsoft.com/microsoftteams/platform/toolkit/use-cicd-template)
-- [Publish the app to your organization or the Microsoft app store](https://learn.microsoft.com/microsoftteams/platform/toolkit/publish)
-- [Develop with Microsoft 365 Agents Toolkit CLI](https://aka.ms/teams-toolkit-cli/debug)
-- [Preview the app on mobile clients](https://aka.ms/teamsfx-mobile)
