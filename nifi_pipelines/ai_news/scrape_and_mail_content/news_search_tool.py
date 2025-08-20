@@ -1,4 +1,5 @@
 import os
+from transformers import pipeline
 import json
 import time
 import datetime
@@ -9,14 +10,102 @@ from langchain_openai import AzureChatOpenAI
 from dotenv import load_dotenv
 from google import genai
 from google.genai.types import Tool, GenerateContentConfig, GoogleSearch
+from langchain_openai import AzureChatOpenAI
+from urllib.parse import urljoin
+import re
+from langchain_core.messages import SystemMessage, HumanMessage
+from datetime import datetime, timezone, timedelta
+import xml.etree.ElementTree as ET
+
+def fetch_and_save_papers_rss_to_json():
+    url = "https://papers.takara.ai/api/feed"
+    response = requests.get(url)
+    response.raise_for_status()
+    root = ET.fromstring(response.content)
+
+    items = []
+    for item in root.findall('.//item'):
+        title = item.findtext('title', default='').strip()
+        content = re.sub(r'AI-generated summary.*', '', item.findtext('description', default='').strip())
+        source_url = item.findtext('link', default='').strip().replace("https://tldr.takara.ai/p/", "https://arxiv.org/abs/")
+        items.append({
+            "title": title,
+            "content": content,
+            "source_url": source_url
+        })
+    articles = items
+    with open("daily_papers.json", "w", encoding="utf-8") as f:
+        json.dump({"articles": articles}, f, ensure_ascii=False, indent=2)
 
 
+def get_reddit_posts(client):
+    # Calculate the timestamp for yesterday
+    yesterday = datetime.now().astimezone(timezone.utc) - timedelta(days=1)
+    yesterday_timestamp = int(yesterday.timestamp())
 
-def search_ai_news(client,model_id,start_time_str, current_time_str):
+    # Fetch posts from the Reddit API that contains text in the description
+    url = f"https://www.reddit.com/r/LocalLLaMa/top.json?t=day&limit=100&after={yesterday_timestamp}&q=text"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    response = requests.get(url, headers=headers)
+    posts = response.json().get('data', {}).get('children', [])
+    posts = [post for post in posts if post.get('data', {}).get('selftext', '')]
+    # Initialize the zero-shot classification pipeline
+    # Filter posts with flair "News", "Discussion", "New Model"
+    posts = [post for post in posts if post.get('data', {}).get('link_flair_text', '') in ["News", "Discussion", "New Model"]]
+    # Get all the posts in News, and New Model , and if <10, then get rermaining discussion posts 
+    classifier = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
+    discussion_posts = [post for post in posts if post.get('data', {}).get('link_flair_text', '') in ["Discussion"]]
+
+    for post in discussion_posts:
+        classification = classifier(post.get('data', {}).get('title', ''),["Current News/Happening/Updates"])
+        post['data']['classification_score'] = classification['scores'][0]
+    discussion_posts = sorted(discussion_posts, key=lambda x: x.get('data', {}).get('classification_score', 0), reverse=True)
+
+    news_posts = [post for post in posts if post.get('data', {}).get('link_flair_text', '') in ["News", "New Model"]]
+    if len(news_posts) < 10:
+        posts = news_posts + discussion_posts
+    else:
+        posts = news_posts
+    posts = posts[:10]
+    
+    
+    articles = []
+
+    for post in posts:
+        post_data = post.get('data', {})
+        title = post_data.get('title', '')
+        content =  post_data.get('title', '') + "\n\n" + post_data.get('selftext', '')
+        # summarize content to one line 
+        # use llm to summarize content
+        summary = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=content,
+            config=GenerateContentConfig(
+                response_modalities=["TEXT"],
+                system_instruction="Summarize the content a bite-sized paragraph,making it understandable for CXOs and high level businesss people. Do not use complex terminology, and use grade 5 english"
+            )
+        )
+        #images = [media.get('oembed', {}).get('thumbnail_url', '') for media in post_data.get('media_metadata', {}).values()] if post_data.get('media_metadata') else []
+        link = post_data.get('url', '')
+        #date_posted = datetime.utcfromtimestamp(post_data.get('created_utc', 0)).strftime('%Y-%m-%d %H:%M:%S')
+        summary_text = summary.candidates[0].content.parts[0].text
+        # Classify the post
+    
+        articles.append({
+            #"date_posted": date_posted,
+            "title": title,
+            "content": summary_text,
+            "source_url": link
+        })
+    with open("reddit_news.json", "w", encoding="utf-8") as f:
+            json.dump({"articles": articles}, f, ensure_ascii=False, indent=2)
+    return articles
+
+
+def search_ai_news(client, model_id, yesterday_str):
     google_search_tool = Tool(
         google_search = GoogleSearch()
     )
-
     # Configure llm client
     response = client.models.generate_content(
         model=model_id,
@@ -46,8 +135,8 @@ def search_ai_news(client,model_id,start_time_str, current_time_str):
     1.  You have been provided with some initial website URLs. While these are a starting point, do not limit your search space to these websites only.
     2.  You are free to search the entire Google index, including news sites, blogs, research papers, and social media platforms like Twitter.
     3.  If you find relevant news on Twitter, include it. If a Twitter post contains a URL to a more detailed article, prioritize the article's URL.
-    4.  VERY IMPORTANT: Collect a total of at least 40 unique articles/posts. Distribute your collection across various sources if possible, but prioritize relevance and recentness.
-    5.  Date Constraint: Only extract articles, posts, or news items published **within the last 24 hours**. Your search window is strictly from **{start_time_str}** to **{current_time_str}**.
+    4.  VERY IMPORTANT: Collect a total of at least 20 unique articles/posts. Distribute your collection across various sources if possible, but prioritize relevance and recentness.
+    5.  Date Constraint: Only extract articles, posts, or news items published on **{yesterday_str} (UTC)**. Treat the valid time window as strictly from **{yesterday_str}** to **{yesterday_str}**.
     6. Content Extraction per Item: For each relevant item, extract:
         *   `title`: The exact headline of the article or post.
         *   `published_date`: The precise publication date in "YYYY-MM-DD" format. If an exact day isn't available but the month/year indicates it's within the last week (e.g., "June 2025" for a scrape run in late June 2025), use the first day of that period or the most accurate date you can infer that falls within the last 7 days. If a clear date within the timeframe cannot be established, skip the item.
@@ -85,8 +174,17 @@ def search_ai_news(client,model_id,start_time_str, current_time_str):
         clean_response_text = full_response_text.replace("```json", "").replace("```", "").strip()
         try:
             news_data = json.loads(clean_response_text)
-            with open(output_file_path, 'w') as f:
-                json.dump(news_data["data"], f, indent=2)
+            # Ensure structure and filter strictly to today's UTC date
+            data_section = news_data.get("data", {}) if isinstance(news_data, dict) else {}
+            articles = data_section.get("articles", []) if isinstance(data_section, dict) else []
+            filtered_articles = []
+            for article in articles:
+                published_date = article.get("published_date")
+                if isinstance(published_date, str) and published_date.strip() == yesterday_str:
+                    filtered_articles.append(article)
+
+            with open(output_file_path, 'w', encoding='utf-8') as f:
+                json.dump({"articles": filtered_articles}, f, indent=2, ensure_ascii=False)
         except json.JSONDecodeError:
             raise ValueError("google search tool: Failed to decode JSON from the response content.")
     else:
@@ -208,13 +306,447 @@ def save_to_json(data: list, filename: str):
         raise IOError(f"Error writing to file {filename}: {e}")
 
 
+### SMOL AI NEWS VARIABLES AND FUNCTIONS
+SMOL_AI_BASE_URL = "https://news.smol.ai/"
+
+# --- Configuration for Scraping Logic ---
+
+# 1. Keywords to identify sub-sections to EXCLUDE within the Twitter Recap
+TWITTER_SUBSECTIONS_TO_EXCLUDE = [
+    "research, evaluation, and ai safety",
+    "industry trends, talent & companies",
+    "company strategy and the industry landscape",
+    "humor, memes, and culture",
+]
+
+# 2. Keywords to identify the HARD STOP for all scraping
+STOP_SCRAPING_KEYWORDS = [
+    "less-technical ai subreddit recap",
+    "discord: detailed by-channel summaries and links"
+]
+
+# 3. Keywords to identify which Discord channels to INCLUDE
+#    The script will match these against the h2 headings in the Discord summary.
+DISCORD_CHANNELS_TO_INCLUDE = {
+    "perplexity", "openai", "huggingface", "mcp", "llm agents", "llamaindex", "dspy", "nomic.ai"
+}
+
+
+def get_latest_issue_url():
+    """Finds the URL for the most recent news issue on the homepage."""
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        response = requests.get(SMOL_AI_BASE_URL, headers=headers)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # The latest issue is usually the first link in the main content area
+        main_content = soup.find('main')
+        if not main_content:
+            return None
+            
+        latest_issue_link = main_content.find('a', href=re.compile(r'/issues/'))
+        if latest_issue_link:
+            full_url = urljoin(SMOL_AI_BASE_URL, latest_issue_link['href'])
+            return full_url
+        else:
+            return None
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"Error fetching homepage of smol ai newsletter: {e}")
+
+def extract_list_items(ul_element, source_url):
+    """Helper function to extract title/content from list items in a <ul>."""
+    items = []
+    if not ul_element:
+        return items
+        
+    for li in ul_element.find_all('li', recursive=False):
+        # The title is usually within a <strong> tag
+        strong_tag = li.find('strong')
+        if strong_tag:
+            title = strong_tag.get_text(strip=True).replace(':', '').strip()
+            strong_tag.extract()  # Remove the title part to get the content
+            content = li.get_text(strip=True)
+            
+            if title and content:
+                items.append({
+                    "title": title,
+                    "content": content,
+                    "source_url": source_url
+                })
+    return items
+
+def parse_issue_page(html_content, issue_url):
+    """
+    Parses the HTML of a specific issue page using a state-machine approach
+    to handle complex inclusion/exclusion rules.
+    """
+    soup = BeautifulSoup(html_content, 'html.parser')
+    articles = []
+    
+    article_body = soup.find('article', class_='content-area')
+    if not article_body:
+        return articles
+
+    current_section = None
+    skip_current_subsection = False
+
+    # Iterate through all top-level tags within the article
+    for element in article_body.find_all(['h1', 'h2', 'h3', 'p', 'ul'], recursive=False):
+        element_text_lower = element.get_text().lower().strip()
+
+        # --- Check for STOP conditions ---
+        if any(keyword in element_text_lower for keyword in STOP_SCRAPING_KEYWORDS):
+            break
+            
+        # --- State Management: Determine which section we are in ---
+        if element.name == 'h1':
+            # Reset subsection skip flag when a new major section starts
+            skip_current_subsection = False
+            if 'ai twitter recap' in element_text_lower:
+                current_section = 'twitter'
+            elif 'ai reddit recap' in element_text_lower:
+                current_section = 'reddit'
+            elif 'discord: high level discord summaries' in element_text_lower:
+                current_section = 'discord'
+            else:
+                current_section = None # We are in a section we don't care about
+
+        # --- Content Processing based on current section state ---
+        if current_section == 'twitter':
+            # Check for sub-headings to exclude
+            if element.name == 'p' and element.find('strong'):
+                if any(keyword in element_text_lower for keyword in TWITTER_SUBSECTIONS_TO_EXCLUDE):
+                    skip_current_subsection = True
+                else:
+                    skip_current_subsection = False
+            
+            # If it's a list and we are not in a skipped subsection, process it
+            if element.name == 'ul' and not skip_current_subsection:
+                source_url = f"{issue_url}#ai-twitter-recap"
+                articles.extend(extract_list_items(element, source_url))
+
+        elif current_section == 'reddit':
+            if element.name == 'ul':
+                source_url = f"{issue_url}#ai-reddit-recap"
+                articles.extend(extract_list_items(element, source_url))
+
+        elif current_section == 'discord':
+            # Discord section has a different structure: H2 -> UL for each channel
+            if element.name == 'h2':
+                channel_name_lower = element.get_text().lower()
+                # Check if this is a channel we want to include
+                if any(keyword in channel_name_lower for keyword in DISCORD_CHANNELS_TO_INCLUDE):
+                    ul_element = element.find_next_sibling('ul')
+                    source_url = f"{issue_url}#{element.get('id', 'discord-high-level-discord-summaries')}"
+                    articles.extend(extract_list_items(ul_element, source_url))
+    
+    return articles
+
+
+### AI NEWS VARIABLES AND FUNCTIONS
+AI_NEWS_BASE_URL = "https://www.ainews.com"
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/114.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
+
+def fetch_url(session, url, retries=2):
+    for i in range(retries):
+        r = session.get(url)
+        if r.status_code == 403 and i < retries - 1:
+            time.sleep(1)
+            continue
+        r.raise_for_status()
+        return r
+    r.raise_for_status()
+
+def get_latest_headlines_url(session,req_date):
+    resp = fetch_url(session, AI_NEWS_BASE_URL)
+    soup = BeautifulSoup(resp.text, "html.parser")
+    for blk in soup.select("div.flex-col.flex"):
+        if blk.find("h4", string=lambda t: t and "Top AiNews.com Headlines" in t):
+            a = blk.find("a", href=True)
+            if req_date in blk.parent.get_text():return urljoin(AI_NEWS_BASE_URL, a["href"])
+            return None
+    raise RuntimeError("Could not find the Top AiNews.com Headlines link.")
+
+def parse_list_items(ul):
+    """Given a <ul>, return list of {title, content, source_url} from its <li>s."""
+    out = []
+    current_utc_time = datetime.now().astimezone(timezone.utc)
+  #  today_utc_date_str = current_utc_time.strftime("%Y-%m-%d")
+    for li in ul.find_all("li", recursive=False):
+        p = li.find("p")
+        if not p:
+            continue
+        a = p.find("a", href=True)
+        if not a:
+            continue
+        title = a.get_text(strip=True)
+        href = urljoin(AI_NEWS_BASE_URL, a["href"])
+        # remove the link text from the paragraph to get the summary
+        full = p.get_text(" ", strip=True)
+        content = full.replace(title, "", 1).lstrip(" -–: ")
+        out.append({
+            "title": title,
+            "content": content,
+            "source_url": href
+#            "date_scraped":today_utc_date_str
+        })
+    return out
+
+def extract_section(soup, section_id, stop_id=None):
+    """
+    Extracts all <ul> lists under the <div id=section_id>, stopping when
+    it encounters <div id=stop_id> (if provided).
+    """
+    container = soup.find("div", id=section_id)
+    if not container:
+        return []
+
+    articles = []
+    # iterate siblings until stop_id
+    for sib in container.find_next_siblings():
+        # stop if we hit the next section
+        if stop_id and sib.name == "div" and sib.get("id") == stop_id:
+            break
+        # find any <ul> within this sib
+        for ul in sib.find_all("ul", recursive=False):
+            articles.extend(parse_list_items(ul))
+    return articles
+
+def create_combined_output():
+    """Combines all articles from both json 'shapiroainews.json' and 'smolainews.json' into a single output 'ai_news.json'."""
+    combined_output = {"articles": []}
+    if os.path.exists("reddit_news.json"):
+        with open("reddit_news.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+            combined_output["articles"].extend(data.get("articles", []))
+    if os.path.exists("daily_papers.json"):
+        with open("daily_papers.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+            combined_output["articles"].extend(data.get("articles", []))
+    # Load articles from shapiroainews.json
+    if os.path.exists("shapiroainews.json"):
+        with open("shapiroainews.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+            combined_output["articles"].extend(data.get("articles", []))
+    
+    # Load articles from smolainews.json
+    if os.path.exists("smolainews.json"):
+        with open("smolainews.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+            combined_output["articles"].extend(data.get("articles", []))
+    
+    # Save the combined output to a new file
+    with open("ai_news.json", "w", encoding="utf-8") as f:
+        json.dump(combined_output, f, ensure_ascii=False, indent=2)
+
+
+def clean_and_overwrite_articles(filepath: str):
+    """
+    Loads articles from a JSON file, cleans their content, and overwrites the file.
+    
+    Cleaning steps:
+    1. Removes patterns like "(Score: 123, Comments: 45): " from the start of content.
+    2. Removes any leading colons from the content.
+    """
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            original_articles = data.get("articles", [])
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        return False
+
+    # Regex to find "(Score: ..., Comments: ...):" at the start of the string
+    score_comment_pattern = re.compile(r'^\(Score: \d+,\s*Comments: \d+\):?\s*')
+    
+    cleaned_articles = []
+    for article in original_articles:
+        if 'content' in article and isinstance(article['content'], str):
+            content = article['content']
+            # Apply regex substitution to remove score/comment pattern
+            content = score_comment_pattern.sub('', content)
+            # Remove leading colon and any extra whitespace from the result
+            content = content.lstrip(':').strip()
+            # Update the article's content
+            article['content'] = content
+        cleaned_articles.append(article)
+
+    # Create the final JSON structure with cleaned articles
+    output_data = {"articles": cleaned_articles}
+
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, indent=2)
+        return True
+    except IOError as e:
+        return False
+
+
+def filter_ai_news_from_file(input_filepath: str):
+    """
+    Loads cleaned articles, deduplicates by title, filters them for a developer
+    audience using an LLM, and saves the result to a new JSON file.
+    """
+    output_filepath = "filtered_ai_news.json"
+
+    
+    # --- Setup and Configuration ---
+    load_dotenv()
+
+    # Updated system prompt focusing on content and specific criteria
+    system_prompt = """
+You are an expert AI news curator for a highly technical audience of AI/ML developers, engineers, and researchers. Your primary task is to analyze the **article content** to make your decision.
+
+**KEEP articles if their content is about:**
+- New LLMs, foundational models, or significant model updates (e.g., new position on a leaderboard).
+- Technical discussions about AI, MCP, UTCP, or related infrastructure.
+- New or updated open-source AI tools, libraries, or evaluation frameworks like Graph RAG.
+- Practical evaluations or comparisons of generative AI tools.
+- Significant research breakthroughs with clear technical implications for developers.
+- Tools which can help in daily office work or tasks or can help technically.
+
+**DISCARD articles if their content is primarily about:**
+- Purely business news: funding rounds, investments, valuations, or company acquisitions.
+- General company announcements, marketing, or promotional content.
+- High-level 'AI in business' use cases without technical details.
+- AI policy, regulation discussions, or generic CEO interviews.
+- Announcements of training programs, cohorts, or educational courses.
+- Entertainment, memes, NSFW, or adult content.
+
+Your response MUST be a single word: either KEEP or DISCARD. Do not add any explanation or punctuation.
+"""
+
+    try:
+        llm = AzureChatOpenAI(
+            model="gpt-4o-mini",
+            api_version="2024-02-01",
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            api_key=SecretStr(os.getenv("AZURE_OPENAI_KEY")),
+            temperature=0,
+        )
+    except (KeyError, TypeError):
+        return
+
+    # --- Load and Deduplicate Articles by Title ---
+    try:
+        with open(input_filepath, "r", encoding="utf-8") as f:
+            all_articles = json.load(f).get("articles", [])
+    except (FileNotFoundError, json.JSONDecodeError):
+        return
+
+    try:
+        with open(output_filepath, "r", encoding="utf-8") as f:
+            yesterday_articles = json.load(f).get("articles", [])
+    except (FileNotFoundError, json.JSONDecodeError):
+        return
+    yesterday_articles= [x['source_url'] for x in yesterday_articles]
+    unique_articles = []
+    seen_titles = set()
+    seen_links = set(yesterday_articles)
+    for article in all_articles:
+        title = article.get("title")
+        if title:
+            normalized_title = title.lower().strip()
+            if normalized_title and normalized_title not in seen_titles and article.get("source_url") not in seen_links:
+                unique_articles.append(article)
+                seen_titles.add(normalized_title)
+
+
+    # --- Filter Articles with LLM ---
+    developer_focused_articles = []
+    for i, article in enumerate(unique_articles):
+        title = article.get("title", "No Title")
+        content = article.get("content", "")
+
+        # The LLM will now primarily judge based on the cleaned content
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"Title: {title}\n\nContent: {content}")
+        ]
+
+        try:
+            response = llm.invoke(messages)
+            decision = response.content.strip().upper()
+            if decision == "KEEP":
+                developer_focused_articles.append(article)
+        except Exception as e:
+            raise Exception(f"Filtering error: {e}")
+    # --- Save Filtered Articles to a New JSON File ---
+    output_data = {"articles": developer_focused_articles}
+
+    try:
+        with open(output_filepath, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, indent=2)
+    except IOError as e:
+        raise IOError(f"Error writing to file {output_filepath}: {e}")
+
+
 def main():
     """
     Main function to run for AI news.
     """
     load_dotenv()
-    GITHUB_TRENDING_URL = "https://github.com/trending?spoken_language_code=en"
+    GITHUB_TRENDING_URL = "https://github.com/trending"
     REPO_OUTPUT_FILE = "trending_repos.json"
+
+
+    ## smol ai news
+    latest_issue_url = get_latest_issue_url()
+
+    # Use timezone-aware datetime with .now() and datetime.timezone.utc
+    
+    yesterday = datetime.now().astimezone(timezone.utc)
+
+    # format time to string
+    yesterday_str = yesterday.strftime("%y-%m-%d")
+    if latest_issue_url and yesterday_str in latest_issue_url:
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+            response = requests.get(latest_issue_url, headers=headers)
+            response.raise_for_status()
+            
+            articles_list = parse_issue_page(response.text, latest_issue_url)
+            
+            if articles_list:
+                final_output = {"articles": articles_list}
+                output_filename = 'smolainews.json'
+                with open(output_filename, 'w', encoding='utf-8') as f:
+                    json.dump(final_output, f, ensure_ascii=False, indent=2)
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"Failed to fetch the issue page content from smol ai newsletter: {e}")        
+
+     ## ai news
+    session = requests.Session()
+    session.headers.update(HEADERS)
+
+    #Fetching homepage
+    yesterday_formatted = yesterday.strftime("%b %d, %Y")
+    latest_url = get_latest_headlines_url(session,yesterday_formatted)
+
+    if latest_url:
+    #Downloading article
+        resp = fetch_url(session, latest_url)
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        #Extracting Today’s Headlines (only today's items; exclude AI Tools which can be older)
+        todays = extract_section(soup, section_id="todays-headlines", stop_id="ai-tools")
+
+        # Exclude AI Tools from aggregation to avoid pulling in prior-day items
+        all_articles = todays
+
+        with open("shapiroainews.json", "w", encoding="utf-8") as f:
+            json.dump({"articles": all_articles}, f, ensure_ascii=False, indent=2)
+    
+
+    time.sleep(10)
+    # Create combined output
 
     # Initialize Azure OpenAI model instance
     llm = AzureChatOpenAI(
@@ -226,19 +758,25 @@ def main():
 
     google_api_key = os.getenv("GOOGLE_API_KEY")
     model_id = "gemini-2.5-pro-preview-03-25"
-    client = genai.Client()
+    client = genai.Client(api_key=google_api_key)
 
-    # current_date = datetime.date.today().strftime("%Y-%m-%d")
-    current_utc_time = datetime.datetime.now(datetime.timezone.utc)
+    get_reddit_posts(client)
+    fetch_and_save_papers_rss_to_json()
 
-    start_utc_time = current_utc_time - datetime.timedelta(hours=24)
-
-    #format time to string
-    current_time_str = current_utc_time.strftime("%Y-%m-%d %H:%M:%S %Z")
-    start_time_str = start_utc_time.strftime("%Y-%m-%d %H:%M:%S %Z")
-
-    # search AI news
-    search_ai_news(client,model_id,start_time_str, current_time_str)
+    # search AI news only if ai_news.json has less than 10 articles
+    combined_news_path = "ai_news.json"
+    run_search_ai_news = True
+    if os.path.exists(combined_news_path):
+        try:
+            with open(combined_news_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                articles = data.get("articles", [])
+                if len(articles) >= 10:
+                    run_search_ai_news = False
+        except Exception:
+            pass
+    if run_search_ai_news:
+        search_ai_news(client, model_id, yesterday_str)
 
     # scrape GitHub trending repositories
     scraped_repos = scrape_github_trending(github_url=GITHUB_TRENDING_URL)
@@ -250,6 +788,18 @@ def main():
         
     relevant_repos = filter_repos_with_ai(llm,scraped_repos)
     save_to_json(relevant_repos, REPO_OUTPUT_FILE)
+    create_combined_output()
+
+    # Define the path to your single news file
+    news_json_file = "ai_news.json"
+    
+    # Check for required files before starting
+    if os.path.exists(news_json_file):
+        # Step 1: Clean the source file in place.
+        # The function returns False if it fails, so we can stop the process.
+        if clean_and_overwrite_articles(news_json_file):
+            # Step 2: Run the filtering process on the now-cleaned file.
+            filter_ai_news_from_file(news_json_file)
 
 
 if __name__ == "__main__":
