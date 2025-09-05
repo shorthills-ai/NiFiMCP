@@ -6,7 +6,11 @@ from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import AzureChatOpenAI
 from pydantic import SecretStr
 import datetime
+import requests
 from dotenv import load_dotenv
+from langchain_community.callbacks import get_openai_callback as openai_callback
+import urllib.parse
+total_cost = 0
 load_dotenv()
 
 # Prepare today's date
@@ -28,6 +32,110 @@ llm = AzureChatOpenAI(
         azure_endpoint=os.getenv('AZURE_OPENAI_ENDPOINT', ''),
         api_key=SecretStr(os.getenv('AZURE_OPENAI_KEY', '')),
         )
+def get_thumbnail_url(source_url):
+    """Get the thumbnail URL from the source URL with comprehensive error handling."""
+    # Default fallback image URL
+    fallback_url = "https://arxiv.org/static/browse/0.3.4/images/arxiv-logo-fb.png"
+    
+    # Validate input
+    if not source_url or not isinstance(source_url, str):
+        print(f"Warning: Invalid source_url provided: {source_url}")
+        return fallback_url
+    
+    source_url = source_url.strip()
+    if not source_url:
+        print("Warning: Empty source_url provided")
+        return fallback_url
+    
+    try:
+        if "arxiv.org" in source_url:
+            # get arxiv id with error handling
+            try:
+                arxiv_id = source_url.split("/")[-1]
+                if arxiv_id:
+                    return f"https://cdn-thumbnails.huggingface.co/social-thumbnails/papers/{arxiv_id}/gradient.png"
+                else:
+                    print(f"Warning: Could not extract arXiv ID from {source_url}")
+                    return fallback_url
+            except (IndexError, AttributeError) as e:
+                print(f"Error extracting arXiv ID from {source_url}: {e}")
+                return fallback_url
+                
+        elif ".jpeg" in source_url or ".png" in source_url or ".jpg" in source_url:
+            return source_url
+            
+        elif "github.com" in source_url:
+            try:
+                repo_path = source_url.replace('https://github.com/', '')
+                if repo_path and repo_path != source_url:  # Ensure replacement worked
+                    return f"https://opengraph.githubassets.com/12e7c96052543eb3beff547811277a293e6d003a901ebf270312c9b352b4460e/{repo_path}"
+                else:
+                    print(f"Warning: Could not extract GitHub repo path from {source_url}")
+                    return fallback_url
+            except Exception as e:
+                print(f"Error processing GitHub URL {source_url}: {e}")
+                return fallback_url
+                
+        elif "reddit.com" in source_url:
+            return f"https://share.redd.it/preview/post/1d04itt"
+        elif "v.reddit.com" in source_url or "redd.it" in source_url:
+            return f"https://share.redd.it/preview/post/1d04itt"
+        else:
+            # Handle OpenGraph API with comprehensive error handling
+            try:
+                # URI encode the source url with error handling
+                try:
+                    encoded_url = urllib.parse.quote(source_url, safe=':/?#[]@!$&\'()*+,;=')
+                except Exception as e:
+                    print(f"Error encoding URL {source_url}: {e}")
+                    return fallback_url
+                
+                # Make HTTP request with timeout and error handling
+                api_url = f"https://opengraph.io/api/1.1/site/{encoded_url}?app_id=f6ef4e6b-4162-40d7-8404-b80736d4bd55"
+                
+                try:
+                    response = requests.get(api_url, timeout=10)
+                    response.raise_for_status()  # Raises HTTPError for bad responses
+                except requests.exceptions.Timeout:
+                    print(f"Timeout fetching OpenGraph data for {source_url}")
+                    return fallback_url
+                except requests.exceptions.HTTPError as e:
+                    print(f"HTTP error fetching OpenGraph data for {source_url}: {e}")
+                    return fallback_url
+                except requests.exceptions.ConnectionError:
+                    print(f"Connection error fetching OpenGraph data for {source_url}")
+                    return fallback_url
+                except requests.exceptions.RequestException as e:
+                    print(f"Request error fetching OpenGraph data for {source_url}: {e}")
+                    return fallback_url
+                
+                # Parse JSON response with error handling
+                try:
+                    image_data = response.json()
+                except json.JSONDecodeError as e:
+                    print(f"JSON decode error for {source_url}: {e}")
+                    return fallback_url
+                
+                # Extract image URL from nested structure with error handling
+                try:
+                    image_url = image_data["openGraph"]["image"]["url"]
+                    if image_url and isinstance(image_url, str) and image_url.strip():
+                        return image_url.strip()
+                    else:
+                        print(f"Empty or invalid image URL from OpenGraph for {source_url}")
+                        return fallback_url
+                except (KeyError, TypeError) as e:
+                    print(f"Error extracting image URL from OpenGraph response for {source_url}: {e}")
+                    print(f"Response structure: {image_data}")
+                    return fallback_url
+                    
+            except Exception as e:
+                print(f"Unexpected error processing {source_url}: {e}")
+                return fallback_url
+    
+    except Exception as e:
+        print(f"Unexpected error in get_thumbnail_url for {source_url}: {e}")
+        return fallback_url
 
 def get_news_highlights(json_path):
     """Fetches AI news highlights from json file generated after scraping/searching for AI news."""
@@ -47,11 +155,12 @@ def get_news_highlights(json_path):
             title = article.get("title", "N/A")
             source_url = article.get("source_url", "N/A")
             content = article.get("content", "N/A")
-
+            thumbnail = get_thumbnail_url(source_url)
             highlight_entry = f'''
 <div class="story-item">
     <div class="story-title">
-        <a href="{source_url}">{title}</a>
+        <a class="story-title" href="{source_url}">{title}</a>
+        <img src="{thumbnail}" alt="Story thumbnail" class="story-thumbnail">
     </div>
     <div class="story-summary">
         {content}
@@ -70,6 +179,7 @@ def get_news_highlights(json_path):
     return highlights_joined, titles_joined, contents_joined
 
 def extract_takeaways_and_topics(titles_combined):
+    global total_cost
     """
     Generate takeaways and topics using Azure OpenAI.
 
@@ -107,15 +217,17 @@ def extract_takeaways_and_topics(titles_combined):
                 ),
                 HumanMessage(content=prompt),
             ]
-
-    response = llm.invoke(messages)
-
+    with openai_callback() as cb:
+        response = llm.invoke(messages)
+        total_cost += cb.total_cost
+        print(f"Total cost: {total_cost}")
     # Extract response
     ai_news = response.content
 
     return ai_news
 
 def sort_highlights(highlights_joined):
+    global total_cost
     """
     Arranges the highlights into different sections based on topics.
     """
@@ -148,7 +260,9 @@ Please provide the sorted and categorized list of highlights below. The final ou
                 HumanMessage(content=prompt),
             ]
 
-    response = llm.invoke(messages)
+    with openai_callback() as cb:
+        response = llm.invoke(messages)
+        total_cost += cb.total_cost
     categorized_highlights = response.content   
     return categorized_highlights
 
@@ -164,20 +278,18 @@ def get_trending_repositories(repo_json_path):
 
     if "repos" in data and isinstance(data["repos"], list):
         for i, article in enumerate(data["repos"], 1):
-            repo_name = article.get("repo_name", "N/A")
-            description = article.get("description", "N/A")
+            #repo_name = article.get("repo_name", "N/A")
+            #description = article.get("description", "N/A")
             source_url = article.get("repo_url", "N/A")
             
             repo_entry = f"""
         <div class="repo-item">
-            <div class="repo-title">🔗 {repo_name}</div>
-            <div class="repo-description">{description}</div>
-            <div class="repo-link"><a href="{source_url}">View on GitHub</a></div>
+            <div class="repo-link"><a href="{source_url}"><img src="{get_thumbnail_url(source_url)}" alt="Story thumbnail" class="story-thumbnail"></a></div>
         </div>
         """
             repositories.append(repo_entry)
 
-            
+    
     if not repositories:
         return "No trending repos found."
     
@@ -186,6 +298,7 @@ def get_trending_repositories(repo_json_path):
     return repositories_joined
 
 def generate_quiz(ai_summary: str) -> tuple[str, dict]:
+
     """
     Generates an interactive HTML quiz with radio buttons based on the AI news summary.
 
@@ -201,7 +314,7 @@ def generate_quiz(ai_summary: str) -> tuple[str, dict]:
         - interactive_quiz (str): The full HTML code for the interactive quiz.
         - answer_key (dict): A dictionary mapping question numbers to correct answers (e.g., {1: 'A', 2: 'C'}).
     """
-    
+    global total_cost
     # 1. Updated prompt to request JSON output with answers (remains the same)
     prompt = f"""
         You are an AI quiz generator specializing in creating interactive learning content.
@@ -250,7 +363,9 @@ def generate_quiz(ai_summary: str) -> tuple[str, dict]:
         SystemMessage(content="You are an AI quiz generator specializing in JSON output."),
         HumanMessage(content=prompt),
     ]
-    response = llm.invoke(messages)
+    with openai_callback() as cb:
+        response = llm.invoke(messages)
+        total_cost += cb.total_cost
     llm_output = response.content
     cleaned_output = llm_output.replace("```json", "").replace("```", "").strip()
 
@@ -266,8 +381,9 @@ def generate_email_content(json_path,repo_json_path):
     """
     Generates the email content with a summary of AI news.
     """
+    global input_tokens, output_tokens
     highlights_joined,titles_joined, contents_joined = get_news_highlights(json_path)
-    topic_takeaways = extract_takeaways_and_topics(titles_joined)
+   # topic_takeaways = extract_takeaways_and_topics(titles_joined)
     titles_list = ''.join(f'<li>{line}</li>' for line in titles_joined.split("||") if line.strip())
     categorized_highlights = sort_highlights(highlights_joined)
 
@@ -311,13 +427,21 @@ def generate_email_content(json_path,repo_json_path):
         }
         .header-links a {
             color: #2563eb;
-            font-size: 14px;
+            font-size: 18px;
             font-weight: 500;
             text-decoration: none;
             margin: 0 10px;
         }
         .header-links a:hover {
             text-decoration: underline;
+        }
+        .newsletter-thumbnail {
+            width: 75%;
+            height: auto;
+            border-radius: 8px;
+            margin: 15px auto;
+            display: block;
+            border: 1px solid #e5e7eb;
         }
         .logo {
             font-size: 28px;
@@ -361,7 +485,7 @@ def generate_email_content(json_path,repo_json_path):
             border-bottom: none;
         }
         .story-title {
-            font-size: 18px;
+            font-size: 21px;
             font-weight: 600;
             color: #2563eb;
             margin-bottom: 8px;
@@ -374,15 +498,19 @@ def generate_email_content(json_path,repo_json_path):
             text-decoration: underline;
         }
         .story-summary {
-            font-size: 15px;
+            font-size: 18px;
             color: #4b5563;
             line-height: 1.5;
         }
-        .story-image {
-            max-width: 100%;
+        .story-thumbnail {
+            width: 75%;
             height: auto;
             border-radius: 8px;
-            margin-top: 10px;
+            margin-bottom: 12px;
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+            border: 1px solid #e5e7eb;
         }
         .repo-item {
             background-color: #f9fafb;
@@ -439,16 +567,13 @@ def generate_email_content(json_path,repo_json_path):
         }
         .quiz-button {
             display: inline-block;
-            background-color: #3b82f6;
+            background-color: #ff8200;
             color: #ffffff;
             padding: 10px 20px;
             border-radius: 20px;
             font-size: 15px;
             font-weight: 600;
             text-decoration: none;
-        }
-        .quiz-button:hover {
-            background-color: #1d4ed8;
         }
         .footer {
             text-align: center;
@@ -516,36 +641,30 @@ def generate_email_content(json_path,repo_json_path):
 """+f"""<body>
     <div class="container">
         <div class="header">
-            
-            <div class="logo">🤖 AI Weekly Digest</div>
+            <img src="https://images.pexels.com/photos/8438918/pexels-photo-8438918.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940" alt="Newsletter thumbnail" class="newsletter-thumbnail">            
+            <div class="logo">🤖 AI Daily Digest</div>
         </div>
         <div class="greeting">
-            Good morning, Shorthills,
+            Good morning Shorthills Geeks!
         </div>
-        <div class="intro">
-            <p>There’s no shortage of impressive AI models on the market — but teaching AI to deliver precise, actionable insights without overwhelming users has been the real challenge. With breakthroughs like Memori’s memory engine and NVIDIA’s Nemotron Nano 2, it looks like AI is about to have its next big moment.</p>
-        </div>
-        <h2>In Today’s AI Rundown</h2>
+        <h2>News At a Glance</h2>
         <ul>
         {titles_list}
         </ul>
-        <h2>LATEST DEVELOPMENTS</h2>
+        <h2>News Articles</h2>
          {categorized_highlights}
-        <div class="takeaways">
-        {topic_takeaways}
         <hr class="section-divider">
 
         <h2>📦 Trending Repositories</h2>
         {trending_repos}
+        <hr class="section-divider">
         <div class="quiz-section">
             <h3>🕒 Quick Quiz</h3>
             <a href="http://104.208.162.61:8002/" class="quiz-button">Test Your AI Knowledge</a>
         </div>
         <div class="footer">
             <div class="social-links">
-                <a href="https://twitter.com/intent/tweet?url=http://104.208.162.61:8002/">Share on Twitter</a> |
-                <a href="https://www.linkedin.com/sharing/share-offsite/?url=http://104.208.162.61:8002/">Share on LinkedIn</a>
-            </div>
+                 </div>
             <p><strong>Best regards,</strong><br>
             <strong>AI News Team</strong><br>
             Shorthills AI</p>
@@ -559,6 +678,7 @@ def generate_email_content(json_path,repo_json_path):
     # Construct the dict object
     email_message = {
         "message": {
+            "isReadReceiptRequested":True,
             "subject": "Daily AI News",
             "body": {
                 "contentType": "HTML",
@@ -567,7 +687,7 @@ def generate_email_content(json_path,repo_json_path):
             "toRecipients": recipients_data
         }
     }
-    print(email_body)
+   #print(email_body)
     # Serialize the whole structure as a valid JSON string
     template = json.dumps(email_message)
 
@@ -584,7 +704,7 @@ def generate_email_content(json_path,repo_json_path):
 if __name__ == "__main__":
     if len(sys.argv) == 2:
         json_path = Path(sys.argv[1])
-
+    
     if not json_path.exists():
         sys.stderr.write(f"Expected news file not found at {json_path}\n")
         sys.exit(1)
@@ -598,4 +718,5 @@ if __name__ == "__main__":
 	
 	
     email_body = generate_email_content(json_path,repo_json_path)
-#    print(email_body['message']['body']['content'])
+    print(email_body)
+    # print(f"Total cost: ${total_cost:.6f}")

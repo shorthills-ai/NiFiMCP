@@ -12,10 +12,85 @@ from google import genai
 from google.genai.types import Tool, GenerateContentConfig, GoogleSearch
 from langchain_openai import AzureChatOpenAI
 from urllib.parse import urljoin
+from langchain_community.callbacks import get_openai_callback as openai_callback
 import re
 from langchain_core.messages import SystemMessage, HumanMessage
 from datetime import datetime, timezone, timedelta
 import xml.etree.ElementTree as ET
+import numpy as np
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+total_cost = 0
+input_tokens = 0
+output_tokens = 0
+# Initialize the sentence transformer model globally to avoid reloading
+_embedding_model = None
+
+def get_embedding_model():
+    """Get or initialize the sentence transformer model."""
+    global _embedding_model
+    if _embedding_model is None:
+        _embedding_model = SentenceTransformer('Qwen/Qwen3-Embedding-0.6B')
+    return _embedding_model
+
+def load_cache():
+    """Load the news cache from file."""
+    cache_file = "news_cache.json"
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                filedata= json.load(f)
+                for article in filedata["articles"]:
+                    if '_embedding' in article:
+                        article['_embedding'] = np.array(article['_embedding'])
+                return filedata
+        except (json.JSONDecodeError, FileNotFoundError):
+            return {"articles": []}
+    return {"articles": []}
+
+def save_cache(cache_data):
+    """Save the news cache to file."""
+    cache_file = "news_cache.json"
+    for article in cache_data["articles"]:
+        article["timestamp"] = datetime.now(timezone.utc).isoformat()
+        if '_embedding' in article:
+            article['_embedding'] = article['_embedding'].tolist() if isinstance(article['_embedding'], np.ndarray) else article['_embedding']  
+    try:
+        with open(cache_file, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f, ensure_ascii=False, indent=2)
+        return True
+    except IOError:
+        return False
+
+def clean_expired_cache(cache_data):
+    """Remove cache entries older than 7 days."""
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=7)
+    cutoff_timestamp = cutoff_date.isoformat()
+    
+    cleaned_articles = []
+    for article in cache_data.get("articles", []):
+        article_timestamp = article.get("timestamp", "")
+        if article_timestamp > cutoff_timestamp:
+            cleaned_articles.append(article)
+    
+    cache_data["articles"] = cleaned_articles
+    return cache_data
+
+
+def add_article_to_cache(cache_data, title, content, source_url):
+    """Add a new article to the cache with its embedding."""
+    #embedding = get_article_embedding(title, content)
+    
+    cache_entry = {
+        "title": title,
+        "content": content[:500],  # Store first 500 chars to save space
+        "source_url": source_url,
+        #"embedding": embedding,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    
+    cache_data["articles"].append(cache_entry)
+    return cache_data
 
 def fetch_and_save_papers_rss_to_json():
     url = "https://papers.takara.ai/api/feed"
@@ -42,30 +117,27 @@ def get_reddit_posts(client):
     # Calculate the timestamp for yesterday
     yesterday = datetime.now().astimezone(timezone.utc) - timedelta(days=1)
     yesterday_timestamp = int(yesterday.timestamp())
+    global input_tokens, output_tokens
 
     # Fetch posts from the Reddit API that contains text in the description
-    url = f"https://www.reddit.com/r/LocalLLaMa/top.json?t=day&limit=100&after={yesterday_timestamp}&q=text"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    url = f"https://oauth.reddit.com/r/LocalLLaMa/top.json?t=day&limit=200&after={yesterday_timestamp}&q=text"
+    headers = {'User-Agent': 'news_updates/0.1 by u/mahnehga','Authorization': 'Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6IlNIQTI1NjpzS3dsMnlsV0VtMjVmcXhwTU40cWY4MXE2OWFFdWFyMnpLMUdhVGxjdWNZIiwidHlwIjoiSldUIn0.eyJzdWIiOiJ1c2VyIiwiZXhwIjoxNzU2MjgwNjQ4Ljk2MTUwNywiaWF0IjoxNzU2MTk0MjQ4Ljk2MTUwNywianRpIjoidnpjOGhKamVEd1FhczJDdFFUWXF1TDlzaFlWcTJ3IiwiY2lkIjoibW5LMWZMbm5saEhibVpsbDY2NnR2USIsImxpZCI6InQyXzFwcWkzY2dqajMiLCJhaWQiOiJ0Ml8xcHFpM2NnamozIiwibGNhIjoxNzQ3NzEwNDQzODk3LCJzY3AiOiJlSnlLVnRKU2lnVUVBQURfX3dOekFTYyIsImZsbyI6OX0.paBiy4U5u1GzYN8KF-aIKg2-rp1LwXiplrqdxKelESGWEBcigfuEC-HObHi2fsud1yWfXy0uSqHGSPxsLshftCcbkGPlzk8-sYdli1yR4dWoVej0b0vJZTCq8WqB89sCarKanql2Ime4PMQrHXygwL724RGt1ssNr4q-vUTSVJzUbsmKB2pKIphwcDMnQ0de3KsxQSE5GuOAIJPMXPQc5tHQAt3dvVHQfyr-l0OPHYVBowxs0VGi-51XMYHe1GhZ7_NpINpUWKDTgnOzzhKQN2IfpD1QTVNBjIEgqPDPtVGcqYfC9k7lNwj0RwU5W_NDGpXIXBo6okzGCZw9IPoI6g'}
     response = requests.get(url, headers=headers)
     posts = response.json().get('data', {}).get('children', [])
     posts = [post for post in posts if post.get('data', {}).get('selftext', '')]
     # Initialize the zero-shot classification pipeline
     # Filter posts with flair "News", "Discussion", "New Model"
-    posts = [post for post in posts if post.get('data', {}).get('link_flair_text', '') in ["News", "Discussion", "New Model"]]
-    # Get all the posts in News, and New Model , and if <10, then get rermaining discussion posts 
     classifier = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
-    discussion_posts = [post for post in posts if post.get('data', {}).get('link_flair_text', '') in ["Discussion"]]
+    #discussion_posts = [post for post in posts if post.get('data', {}).get('link_flair_text', '') in ["Discussion"]]
 
-    for post in discussion_posts:
-        classification = classifier(post.get('data', {}).get('title', ''),["Current News/Happening/Updates"])
-        post['data']['classification_score'] = classification['scores'][0]
-    discussion_posts = sorted(discussion_posts, key=lambda x: x.get('data', {}).get('classification_score', 0), reverse=True)
-
+    
     news_posts = [post for post in posts if post.get('data', {}).get('link_flair_text', '') in ["News", "New Model"]]
-    if len(news_posts) < 10:
-        posts = news_posts + discussion_posts
-    else:
-        posts = news_posts
+    for post in news_posts:
+        classification = classifier(post.get('data', {}).get('title', '') + "\n\n" + post.get('data', {}).get('selftext', ''),["Current News/Happening/Updates"])
+        post['data']['classification_score'] = classification['scores'][0]
+    #sort posts by classification score, and score + comments
+    posts = sorted(posts, key=lambda x: (x.get('data', {}).get('classification_score', 0), x.get('data', {}).get('score', 0) + x.get('data', {}).get('num_comments', 0)), reverse=True)
+    #import pdb;pdb.set_trace()
     posts = posts[:10]
     
     
@@ -82,9 +154,13 @@ def get_reddit_posts(client):
             contents=content,
             config=GenerateContentConfig(
                 response_modalities=["TEXT"],
-                system_instruction="Summarize the content a bite-sized paragraph,making it understandable for CXOs and high level businesss people. Do not use complex terminology, and use grade 5 english"
+                maxOutputTokens=100,
+                system_instruction="Summarize the provided news content into a concise, professional paragraph. Try to avoid a conversational tone, and technical language. Focus on key insights, implications, and data points"
             )
         )
+        # Count model tokens
+        input_tokens += summary.usage_metadata.prompt_token_count
+        output_tokens += summary.usage_metadata.candidates_token_count
         #images = [media.get('oembed', {}).get('thumbnail_url', '') for media in post_data.get('media_metadata', {}).values()] if post_data.get('media_metadata') else []
         link = post_data.get('url', '')
         #date_posted = datetime.utcfromtimestamp(post_data.get('created_utc', 0)).strftime('%Y-%m-%d %H:%M:%S')
@@ -162,7 +238,7 @@ def search_ai_news(client, model_id, yesterday_str):
             response_modalities=["TEXT"],
         )
     )
-
+    
     output_file_path = "ai_news.json"
 
     full_response_text = ""
@@ -522,30 +598,123 @@ def extract_section(soup, section_id, stop_id=None):
 
 def create_combined_output():
     """Combines all articles from both json 'shapiroainews.json' and 'smolainews.json' into a single output 'ai_news.json'."""
+    # Load cache and clean expired entries
+    cache_data = load_cache()
+    cache_data = clean_expired_cache(cache_data)
+    
+    # First, collect all articles from all sources
+    all_today_articles = []
+    source_files = [
+        "reddit_news.json",
+        "daily_papers.json", 
+        "shapiroainews.json",
+        "smolainews.json"
+    ]
+    
+    for source_file in source_files:
+        if os.path.exists(source_file):
+            with open(source_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                articles = data.get("articles", [])
+                for article in articles:
+                    article["source_file"] = source_file  # Track which file it came from
+                    all_today_articles.append(article)
+    
+    print(f"Collected {len(all_today_articles)} articles from all sources")
+    
+    # Step 1: Remove duplicates within today's articles (preliminary check)
+    # Precompute embeddings for all articles upfront
+    model = get_embedding_model()
+    combined_texts = [article.get('title', '') for article in all_today_articles]
+    # Compute embeddings in batch
+    all_embeddings = model.encode(combined_texts)
+    # Attach embedding to each article for deduplication
+    for article, embedding in zip(all_today_articles, all_embeddings):
+        article["_embedding"] = embedding
+
+    unique_today_articles = []
+    today_skipped = 0
+
+    for i, article in enumerate(all_today_articles):
+        title = article.get("title", "")
+        content = article.get("content", "")
+        source_url = article.get("source_url", "")
+        embedding = np.array(article["_embedding"]).reshape(1, -1)
+
+        # Check against other articles collected today
+        is_duplicate_today = False
+        for j, existing_article in enumerate(unique_today_articles):
+            existing_title = existing_article.get("title", "")
+            existing_content = existing_article.get("content", "")
+            existing_url = existing_article.get("source_url", "")
+            existing_embedding = np.array(existing_article["_embedding"]).reshape(1, -1)
+            if i==j:
+                continue
+            # Check URL match first (fastest)
+            if source_url and existing_url and source_url == existing_url and "https://news.smol.ai" not in source_url:
+                is_duplicate_today = True
+                print(f"Skipped today's duplicate (URL match): {title[:60]}...")
+                break
+
+            # Check content similarity
+            if title and content and existing_title and existing_content:
+                similarity = cosine_similarity(embedding, existing_embedding)[0][0]
+                if similarity >= 0.81:  # Same threshold as cache check
+                    is_duplicate_today = True
+                    print(f"Skipped today's duplicate (similarity {similarity:.3f}): {title[:60]}...")
+                    break
+
+        if not is_duplicate_today:
+            unique_today_articles.append(article)
+        else:
+            today_skipped += 1
+
+    print(f"After preliminary deduplication: {len(unique_today_articles)} unique articles, skipped {today_skipped} today's duplicates")
+
+    # Step 2: Check against cache for historical duplicates
     combined_output = {"articles": []}
-    if os.path.exists("reddit_news.json"):
-        with open("reddit_news.json", "r", encoding="utf-8") as f:
-            data = json.load(f)
-            combined_output["articles"].extend(data.get("articles", []))
-    if os.path.exists("daily_papers.json"):
-        with open("daily_papers.json", "r", encoding="utf-8") as f:
-            data = json.load(f)
-            combined_output["articles"].extend(data.get("articles", []))
-    # Load articles from shapiroainews.json
-    if os.path.exists("shapiroainews.json"):
-        with open("shapiroainews.json", "r", encoding="utf-8") as f:
-            data = json.load(f)
-            combined_output["articles"].extend(data.get("articles", []))
-    
-    # Load articles from smolainews.json
-    if os.path.exists("smolainews.json"):
-        with open("smolainews.json", "r", encoding="utf-8") as f:
-            data = json.load(f)
-            combined_output["articles"].extend(data.get("articles", []))
-    
+    cache_skipped = 0
+
+    for article in unique_today_articles:
+        title = article.get("title", "")
+        content = article.get("content", "")
+        source_url = article.get("source_url", "")
+
+        # Check if article is similar to cached articles
+        is_similar = False
+        for cached_article in cache_data["articles"]:
+            if cached_article.get("title") == title and cached_article.get("content") == content:
+                is_similar = True
+                reason = "title and content match"
+                break
+            if cached_article.get("source_url") == source_url:
+                is_similar = True
+                reason = "source_url match"
+                break
+            if cosine_similarity(np.array(cached_article.get("_embedding")).reshape(1, -1),np.array(article.get("_embedding")).reshape(1, -1))[0][0] >= 0.81:
+                is_similar = True
+                reason = "embedding match"
+                break
+        
+        if not is_similar:
+            # Remove the source_file tracking before adding to output
+            article_copy = {k: v for k, v in article.items() if k != "source_file"}
+            article_copy['_embedding'] = article_copy['_embedding'].tolist() if isinstance(article_copy['_embedding'], np.ndarray) else article_copy['_embedding']
+            combined_output["articles"].append(article_copy)
+            print(f"Added article: {title[:60]}...")
+        else:
+            cache_skipped += 1
+            print(f"Skipped cached duplicate ({reason}): {title[:60]}...")
+
+    print(f"Final result: {len(combined_output['articles'])} articles, skipped {today_skipped} today's duplicates + {cache_skipped} cached duplicates")
+
     # Save the combined output to a new file
     with open("ai_news.json", "w", encoding="utf-8") as f:
+
         json.dump(combined_output, f, ensure_ascii=False, indent=2)
+
+    # Save updated cache
+    save_cache(cache_data)
 
 
 def clean_and_overwrite_articles(filepath: str):
@@ -595,10 +764,10 @@ def filter_ai_news_from_file(input_filepath: str):
     audience using an LLM, and saves the result to a new JSON file.
     """
     output_filepath = "filtered_ai_news.json"
-
     
     # --- Setup and Configuration ---
     load_dotenv()
+    global total_cost
 
     # Updated system prompt focusing on content and specific criteria
     system_prompt = """
@@ -633,7 +802,6 @@ Your response MUST be a single word: either KEEP or DISCARD. Do not add any expl
         )
     except (KeyError, TypeError):
         return
-
     # --- Load and Deduplicate Articles by Title ---
     try:
         with open(input_filepath, "r", encoding="utf-8") as f:
@@ -649,7 +817,7 @@ Your response MUST be a single word: either KEEP or DISCARD. Do not add any expl
     yesterday_articles= [x['source_url'] for x in yesterday_articles]
     unique_articles = []
     seen_titles = set()
-    seen_links = set(yesterday_articles)
+    seen_links = set()
     for article in all_articles:
         title = article.get("title")
         if title:
@@ -662,6 +830,7 @@ Your response MUST be a single word: either KEEP or DISCARD. Do not add any expl
     # --- Filter Articles with LLM ---
     developer_focused_articles = []
     for i, article in enumerate(unique_articles):
+        if(len(developer_focused_articles)>7):break
         title = article.get("title", "No Title")
         content = article.get("content", "")
 
@@ -672,7 +841,9 @@ Your response MUST be a single word: either KEEP or DISCARD. Do not add any expl
         ]
 
         try:
-            response = llm.invoke(messages)
+            with openai_callback() as cb:
+                response = llm.invoke(messages)
+                total_cost += cb.total_cost
             decision = response.content.strip().upper()
             if decision == "KEEP":
                 developer_focused_articles.append(article)
@@ -681,6 +852,7 @@ Your response MUST be a single word: either KEEP or DISCARD. Do not add any expl
     # --- Save Filtered Articles to a New JSON File ---
     output_data = {"articles": developer_focused_articles}
 
+    save_cache(output_data)
     try:
         with open(output_filepath, "w", encoding="utf-8") as f:
             json.dump(output_data, f, indent=2)
@@ -692,6 +864,7 @@ def main():
     """
     Main function to run for AI news.
     """
+    global total_cost
     load_dotenv()
     GITHUB_TRENDING_URL = "https://github.com/trending"
     REPO_OUTPUT_FILE = "trending_repos.json"
@@ -702,7 +875,7 @@ def main():
 
     # Use timezone-aware datetime with .now() and datetime.timezone.utc
     
-    yesterday = datetime.now().astimezone(timezone.utc)
+    yesterday = datetime.now().astimezone(timezone.utc) - timedelta(days=1)
 
     # format time to string
     yesterday_str = yesterday.strftime("%y-%m-%d")
@@ -725,6 +898,14 @@ def main():
      ## ai news
     session = requests.Session()
     session.headers.update(HEADERS)
+    # if os.path.exists("shapiroainews.json"):
+    #     os.remove("shapiroainews.json")
+    # if os.path.exists("smolainews.json"):
+    #     os.remove("smolainews.json")
+    # if os.path.exists("ai_news.json"):
+    #     os.remove("ai_news.json")
+    # if os.path.exists("filtered_ai_news.json"):
+    #     os.remove("filtered_ai_news.json")
 
     #Fetching homepage
     yesterday_formatted = yesterday.strftime("%b %d, %Y")
@@ -745,7 +926,7 @@ def main():
             json.dump({"articles": all_articles}, f, ensure_ascii=False, indent=2)
     
 
-    time.sleep(10)
+    #time.sleep(10)
     # Create combined output
 
     # Initialize Azure OpenAI model instance
@@ -757,7 +938,7 @@ def main():
             )
 
     google_api_key = os.getenv("GOOGLE_API_KEY")
-    model_id = "gemini-2.5-pro-preview-03-25"
+    model_id = "gemini-2.0-flash"
     client = genai.Client(api_key=google_api_key)
 
     get_reddit_posts(client)
@@ -765,18 +946,18 @@ def main():
 
     # search AI news only if ai_news.json has less than 10 articles
     combined_news_path = "ai_news.json"
-    run_search_ai_news = True
-    if os.path.exists(combined_news_path):
-        try:
-            with open(combined_news_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                articles = data.get("articles", [])
-                if len(articles) >= 10:
-                    run_search_ai_news = False
-        except Exception:
-            pass
-    if run_search_ai_news:
-        search_ai_news(client, model_id, yesterday_str)
+    #run_search_ai_news = True
+    #if os.path.exists(combined_news_path):
+    #    try:
+    #        with open(combined_news_path, "r", encoding="utf-8") as f:
+    #            data = json.load(f)
+    #            articles = data.get("articles", [])
+    #            if len(articles) >= 10:
+    #                run_search_ai_news = False
+    #    except Exception:
+    #        pass
+    #if run_search_ai_news:
+    #search_ai_news(client, model_id, yesterday_str)
 
     # scrape GitHub trending repositories
     scraped_repos = scrape_github_trending(github_url=GITHUB_TRENDING_URL)
@@ -792,7 +973,7 @@ def main():
 
     # Define the path to your single news file
     news_json_file = "ai_news.json"
-    
+    total_cost +=1e-07*input_tokens + 4e-07*output_tokens
     # Check for required files before starting
     if os.path.exists(news_json_file):
         # Step 1: Clean the source file in place.
@@ -800,6 +981,9 @@ def main():
         if clean_and_overwrite_articles(news_json_file):
             # Step 2: Run the filtering process on the now-cleaned file.
             filter_ai_news_from_file(news_json_file)
+    print(f"Input tokens: {input_tokens}")
+    print(f"Output tokens: {output_tokens}")
+    print(f"Total cost: ${total_cost:.6f}")
 
 
 if __name__ == "__main__":
