@@ -1,0 +1,19 @@
+# Ignore input, output, and dependencies
+input/
+node_modules/
+output/
+
+# Environment files
+.env
+
+# Python files
+main.py
+nohup.out
+
+# Node package files
+package-lock.json
+package.json
+
+# Logs and tokens
+token_logs.csv
+token_review.log
