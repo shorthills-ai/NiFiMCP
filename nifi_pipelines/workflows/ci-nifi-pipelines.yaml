@@ -108,7 +108,7 @@ jobs:
         
         echo "🐳 Building image: $IMAGE"
         # Dockerfile installs NiFi/dependencies and copies all from nifi_pipelines/
-        timeout 60m docker build -t "$IMAGE" ./nifi || { echo '❌ NiFi build failed'; exit 1; }
+        timeout 60m docker build -t "$IMAGE" ./nifi_pipelines || { echo '❌ NiFi build failed'; exit 1; }
         
         echo "📤 Pushing image to ACR..."
         docker push "$IMAGE" || { echo '❌ NiFi push failed'; exit 1; }
