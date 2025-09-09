@@ -1,0 +1,6 @@
+This is a test document for the text_to_weaviate script.
+It contains multiple sentences to test the chunking functionality.
+The script should split this text into chunks and index them in Weaviate.
+Each chunk will be converted into embeddings using Azure OpenAI.
+The chunks will be stored with their source file name and chunk index.
+This helps verify that the entire pipeline is working correctly. 
