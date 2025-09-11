@@ -919,12 +919,15 @@ async def search_nifi_flow(
                     if filter_process_group_id:
                         item_pg_id = item.get("groupId")
                         if item_pg_id != filter_process_group_id:
-                            # TODO: Implement recursive check if needed
-                            # For now, only direct parent match
-                            parent_pg_id=await nifi_client.get_process_group_details(item_pg_id).get('component',{}).get('parentGroupId')
-                            if not await nifi_client.is_descendant(filter_process_group_id, parent_pg_id):
-                                # Skip this item if it doesn't match the filter
-                                local_logger.trace(f"Skipping item {item.get('id')} due to PG filter mismatch (Item PG: {item_pg_id}, Filter PG: {filter_process_group_id})")
+                            try:
+                                # Check if the item's process group is a descendant of the filter process group
+                                if not await nifi_client.is_descendant(item_pg_id, filter_process_group_id):
+                                    # Skip this item if it's not in the filter process group hierarchy
+                                    local_logger.debug(f"Skipping item {item.get('id')} due to PG filter mismatch (Item PG: {item_pg_id}, Filter PG: {filter_process_group_id})")
+                                    continue
+                            except Exception as e:
+                                local_logger.warning(f"Error checking process group hierarchy for {item.get('id')}: {e}")
+                                # Skip items where we can't verify the hierarchy
                                 continue
                             
                     
