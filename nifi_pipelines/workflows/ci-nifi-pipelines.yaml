@@ -6,7 +6,7 @@ on:
       - 10178-CI-Pipeline  # Trigger only on test branch
     paths:
       - 'nifi_pipelines/**'  # Trigger only if files in nifi_pipelines/ or subfolders change
-
+  workflow_dispatch:
 env:
   ACR_REGISTRY: nifiacr12345.azurecr.io
   NIFI_IMAGE_NAME: ai-studio-dev
