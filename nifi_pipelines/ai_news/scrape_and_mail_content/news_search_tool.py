@@ -1,25 +1,24 @@
 import os
+from urllib.parse import urlparse
 from transformers import pipeline
 import json
+import feedparser
 import time
-import datetime
-import requests
+#import requests
+from urllib.parse import quote
 from bs4 import BeautifulSoup
-from pydantic import SecretStr
-from langchain_openai import AzureChatOpenAI
+# from pydantic import SecretStr  # No longer needed for OpenAI
 from dotenv import load_dotenv
 from google import genai
 from google.genai.types import Tool, GenerateContentConfig, GoogleSearch
-from langchain_openai import AzureChatOpenAI
 from urllib.parse import urljoin
-from langchain_community.callbacks import get_openai_callback as openai_callback
 import re
-from langchain_core.messages import SystemMessage, HumanMessage
 from datetime import datetime, timezone, timedelta
 import xml.etree.ElementTree as ET
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
+from curl_cffi import requests
 total_cost = 0
 input_tokens = 0
 output_tokens = 0
@@ -113,16 +112,41 @@ def fetch_and_save_papers_rss_to_json():
         json.dump({"articles": articles}, f, ensure_ascii=False, indent=2)
 
 
+def load_reddit_token():
+    """Load Reddit access token from .cass file."""
+    try:
+        with open('.cass', 'r') as f:
+            token = f.read().strip()
+        if not token:
+            raise ValueError("Empty token in .cass file")
+        return token
+    except FileNotFoundError:
+        print("Error: .cass file not found. Please create it with your Reddit access token.")
+        return None
+    except Exception as e:
+        print(f"Error reading .cass file: {e}")
+        return None
+
 def get_reddit_posts(client):
     # Calculate the timestamp for yesterday
     yesterday = datetime.now().astimezone(timezone.utc) - timedelta(days=1)
     yesterday_timestamp = int(yesterday.timestamp())
     global input_tokens, output_tokens
+    
+    # Load Reddit access token from .cass file
+    reddit_token = load_reddit_token()
+    if not reddit_token:
+        print("Skipping Reddit posts - no valid token available")
+        return []
 
     # Fetch posts from the Reddit API that contains text in the description
     url = f"https://oauth.reddit.com/r/LocalLLaMa/top.json?t=day&limit=200&after={yesterday_timestamp}&q=text"
-    headers = {'User-Agent': 'news_updates/0.1 by u/mahnehga','Authorization': 'Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6IlNIQTI1NjpzS3dsMnlsV0VtMjVmcXhwTU40cWY4MXE2OWFFdWFyMnpLMUdhVGxjdWNZIiwidHlwIjoiSldUIn0.eyJzdWIiOiJ1c2VyIiwiZXhwIjoxNzU2MjgwNjQ4Ljk2MTUwNywiaWF0IjoxNzU2MTk0MjQ4Ljk2MTUwNywianRpIjoidnpjOGhKamVEd1FhczJDdFFUWXF1TDlzaFlWcTJ3IiwiY2lkIjoibW5LMWZMbm5saEhibVpsbDY2NnR2USIsImxpZCI6InQyXzFwcWkzY2dqajMiLCJhaWQiOiJ0Ml8xcHFpM2NnamozIiwibGNhIjoxNzQ3NzEwNDQzODk3LCJzY3AiOiJlSnlLVnRKU2lnVUVBQURfX3dOekFTYyIsImZsbyI6OX0.paBiy4U5u1GzYN8KF-aIKg2-rp1LwXiplrqdxKelESGWEBcigfuEC-HObHi2fsud1yWfXy0uSqHGSPxsLshftCcbkGPlzk8-sYdli1yR4dWoVej0b0vJZTCq8WqB89sCarKanql2Ime4PMQrHXygwL724RGt1ssNr4q-vUTSVJzUbsmKB2pKIphwcDMnQ0de3KsxQSE5GuOAIJPMXPQc5tHQAt3dvVHQfyr-l0OPHYVBowxs0VGi-51XMYHe1GhZ7_NpINpUWKDTgnOzzhKQN2IfpD1QTVNBjIEgqPDPtVGcqYfC9k7lNwj0RwU5W_NDGpXIXBo6okzGCZw9IPoI6g'}
+    headers = {
+        'User-Agent': 'news_updates/0.1 by u/mahnehga',
+        'Authorization': f'Bearer {reddit_token}'
+    }
     response = requests.get(url, headers=headers)
+    response.raise_for_status()
     posts = response.json().get('data', {}).get('children', [])
     posts = [post for post in posts if post.get('data', {}).get('selftext', '')]
     # Initialize the zero-shot classification pipeline
@@ -136,7 +160,7 @@ def get_reddit_posts(client):
         classification = classifier(post.get('data', {}).get('title', '') + "\n\n" + post.get('data', {}).get('selftext', ''),["Current News/Happening/Updates"])
         post['data']['classification_score'] = classification['scores'][0]
     #sort posts by classification score, and score + comments
-    posts = sorted(posts, key=lambda x: (x.get('data', {}).get('classification_score', 0), x.get('data', {}).get('score', 0) + x.get('data', {}).get('num_comments', 0)), reverse=True)
+    posts = sorted(news_posts, key=lambda x: (x.get('data', {}).get('score', 0) + x.get('data', {}).get('num_comments', 0)), reverse=True)
     #import pdb;pdb.set_trace()
     posts = posts[:10]
     
@@ -154,7 +178,7 @@ def get_reddit_posts(client):
             contents=content,
             config=GenerateContentConfig(
                 response_modalities=["TEXT"],
-                maxOutputTokens=100,
+                max_output_tokens=100,
                 system_instruction="Summarize the provided news content into a concise, professional paragraph. Try to avoid a conversational tone, and technical language. Focus on key insights, implications, and data points"
             )
         )
@@ -162,7 +186,7 @@ def get_reddit_posts(client):
         input_tokens += summary.usage_metadata.prompt_token_count
         output_tokens += summary.usage_metadata.candidates_token_count
         #images = [media.get('oembed', {}).get('thumbnail_url', '') for media in post_data.get('media_metadata', {}).values()] if post_data.get('media_metadata') else []
-        link = post_data.get('url', '')
+        link = 'https://reddit.com' + post_data.get('permalink', '')
         #date_posted = datetime.utcfromtimestamp(post_data.get('created_utc', 0)).strftime('%Y-%m-%d %H:%M:%S')
         summary_text = summary.candidates[0].content.parts[0].text
         # Classify the post
@@ -173,213 +197,16 @@ def get_reddit_posts(client):
             "content": summary_text,
             "source_url": link
         })
+    
+    # Save articles to file (even if empty list)
     with open("reddit_news.json", "w", encoding="utf-8") as f:
-            json.dump({"articles": articles}, f, ensure_ascii=False, indent=2)
+        json.dump({"articles": articles}, f, ensure_ascii=False, indent=2)
+    
+    print(f"Saved {len(articles)} Reddit articles to reddit_news.json")
     return articles
 
 
-def search_ai_news(client, model_id, yesterday_str):
-    google_search_tool = Tool(
-        google_search = GoogleSearch()
-    )
-    # Configure llm client
-    response = client.models.generate_content(
-        model=model_id,
-        contents="""- https://medium.com/google-cloud
-    - https://ai.meta.com/blog/
-    - https://www.ainews.com/
-    - https://www.reddit.com/r/LocalLLaMA/
-    - https://alphasignal.ai/last-email
-    - https://www.reddit.com/r/LocalLLM/
-    - https://news.smol.ai/
-    - https://openai.com/news/""",
 
-        config=GenerateContentConfig(
-            tools=[google_search_tool],
-            system_instruction=f"""
-    You are an AI research agent. Your primary task is to meticulously extract diverse and recent developments in Artificial Intelligence (AI), Generative AI (GenAI), Large Language Models (LLMs), AI tools, and MCP server related news.
-
-    Focus on:
-    - AI advancements and breakthroughs
-    - GenAI tools and platforms
-    - Tools and platforms for building AI applications
-    - New LLM releases and research
-    - MCP server updates using LLMs
-    - Advances in multimodal AI, embeddings, chunking, MCP servers, internet/deep search, agent-to-agent protocols, and no-code/low-code AI pipelines
-
-    Instructions:
-    1.  You have been provided with some initial website URLs. While these are a starting point, do not limit your search space to these websites only.
-    2.  You are free to search the entire Google index, including news sites, blogs, research papers, and social media platforms like Twitter.
-    3.  If you find relevant news on Twitter, include it. If a Twitter post contains a URL to a more detailed article, prioritize the article's URL.
-    4.  VERY IMPORTANT: Collect a total of at least 20 unique articles/posts. Distribute your collection across various sources if possible, but prioritize relevance and recentness.
-    5.  Date Constraint: Only extract articles, posts, or news items published on **{yesterday_str} (UTC)**. Treat the valid time window as strictly from **{yesterday_str}** to **{yesterday_str}**.
-    6. Content Extraction per Item: For each relevant item, extract:
-        *   `title`: The exact headline of the article or post.
-        *   `published_date`: The precise publication date in "YYYY-MM-DD" format. If an exact day isn't available but the month/year indicates it's within the last week (e.g., "June 2025" for a scrape run in late June 2025), use the first day of that period or the most accurate date you can infer that falls within the last 7 days. If a clear date within the timeframe cannot be established, skip the item.
-        *   `content`: A descriptive and detailed summary of the key information, developments, insights, or announcements from the article or post. Capture the essence and important details that make it newsworthy in the context of AI advancements.
-        *  `summary`: A 2-3 line short summary of the article or post capturing the main points or findings.
-        *   `source_url`: The direct permalink to the article or post.
-
-    Return your final output strictly in the following format, with no extra text:
-    {{
-    "data": {{
-        "articles": [
-        {{
-            "title": "string",
-            "content": "string",
-            "summary": "string",
-            "source_url": "string",
-            "published_date": "YYYY-MM-DD"
-        }}
-        ]
-    }}
-    }}
-            """,
-            response_modalities=["TEXT"],
-        )
-    )
-    
-    output_file_path = "ai_news.json"
-
-    full_response_text = ""
-    if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
-        for part in response.candidates[0].content.parts:
-            full_response_text += part.text
-
-    if full_response_text:
-        clean_response_text = full_response_text.replace("```json", "").replace("```", "").strip()
-        try:
-            news_data = json.loads(clean_response_text)
-            # Ensure structure and filter strictly to today's UTC date
-            data_section = news_data.get("data", {}) if isinstance(news_data, dict) else {}
-            articles = data_section.get("articles", []) if isinstance(data_section, dict) else []
-            filtered_articles = []
-            for article in articles:
-                published_date = article.get("published_date")
-                if isinstance(published_date, str) and published_date.strip() == yesterday_str:
-                    filtered_articles.append(article)
-
-            with open(output_file_path, 'w', encoding='utf-8') as f:
-                json.dump({"articles": filtered_articles}, f, indent=2, ensure_ascii=False)
-        except json.JSONDecodeError:
-            raise ValueError("google search tool: Failed to decode JSON from the response content.")
-    else:
-        raise ValueError("google search tool: No content parts found in the response candidates.")
-
-
-def scrape_github_trending(github_url):
-    """
-    Scrapes the GitHub trending page for English language repositories.
-
-    Returns:
-        list: A list of dictionaries, where each dictionary contains the
-              name, URL, and description of a repository. Returns an empty
-              list if scraping fails.
-    """
-    try:
-        response = requests.get(github_url, timeout=15)
-        response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
-    except requests.exceptions.RequestException as e:
-        return []
-
-    soup = BeautifulSoup(response.text, 'html.parser')
-    repo_list = []
-    
-    # Each trending repository is an <article> with class 'Box-row'
-    repo_articles = soup.find_all('article', class_='Box-row')
-
-    for article in repo_articles:
-        # Extract repository name and URL
-        h2_tag = article.find('h2', class_='h3')
-        if not h2_tag:
-            continue
-        
-        a_tag = h2_tag.find('a', href=True)
-        if not a_tag:
-            continue
-            
-        repo_name = a_tag.get_text(strip=True).replace(" / ", "/")
-        repo_url = "https://github.com" + a_tag['href']
-
-        # Extract description
-        p_tag = article.find('p', class_='col-9')
-        description = p_tag.get_text(strip=True) if p_tag else "No description provided."
-
-        repo_list.append({
-            "repo_name": repo_name,
-            "repo_url": repo_url,
-            "description": description
-        })
-        
-    return repo_list
-
-def filter_repos_with_ai(llm,repos_to_filter: list):
-    """
-    Uses a generative AI model to filter repositories based on relevance to
-    AI-related topics.
-
-    Args:
-        repos_to_filter (list): A list of repository dictionaries.
-
-    Returns:
-        list: A new list containing only the repositories deemed relevant by the AI.
-    """
-
-    filtered_repos = []
-    
-    # This is the prompt that will instruct the AI
-    system_prompt = """
-    You are an expert AI software engineer. Your task is to determine if a GitHub repository is related to any of the following topics:
-    - Generative AI
-    - MCP (Model-Context-Protocol)
-    - RAG (Retrieval-Augmented Generation)
-    - LLM (Large Language Model)
-    - General AI (Artificial Intelligence) tools, libraries, or applications.
-    - Vector databases or vector search engines.
-
-    I will provide you with the repository name and its description.
-    You must respond with only 'YES' or 'NO'. Do not add any explanation or punctuation.
-    """
-
-    for i, repo in enumerate(repos_to_filter):
-        repo_info = f"Repository Name: {repo['repo_name']}\nDescription: {repo['description']}"
-        
-        try:
-            # The full prompt combines the system instruction and the specific repo info
-            full_prompt = f"{system_prompt}\n\n{repo_info}"
-            response = llm.invoke(full_prompt)
-            
-            answer = response.content.strip().upper()
-            
-            if answer == "YES":
-                filtered_repos.append(repo)
-
-            # Add a small delay to respect API rate limits
-            time.sleep(2)
-
-        except Exception as e:
-            # Continue to the next repo even if one fails
-            continue
-
-    return filtered_repos
-
-def save_to_json(data: list, filename: str):
-    """
-    Saves the provided data to a JSON file in the specified format.
-
-    Args:
-        data (list): The list of repositories to save.
-        filename (str): The name of the output JSON file.
-    """
-    output_structure = {
-            "repos": data
-        }
-
-    try:
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(output_structure, f, indent=2, ensure_ascii=False)
-    except IOError as e:
-        raise IOError(f"Error writing to file {filename}: {e}")
 
 
 ### SMOL AI NEWS VARIABLES AND FUNCTIONS
@@ -441,6 +268,7 @@ def extract_list_items(ul_element, source_url):
         strong_tag = li.find('strong')
         if strong_tag:
             title = strong_tag.get_text(strip=True).replace(':', '').strip()
+            quote_title = quote(strong_tag.get_text(strip=True).strip())
             strong_tag.extract()  # Remove the title part to get the content
             content = li.get_text(strip=True)
             
@@ -448,7 +276,7 @@ def extract_list_items(ul_element, source_url):
                 items.append({
                     "title": title,
                     "content": content,
-                    "source_url": source_url
+                    "source_url": source_url+":~:text="+quote_title
                 })
     return items
 
@@ -606,9 +434,10 @@ def create_combined_output():
     all_today_articles = []
     source_files = [
         "reddit_news.json",
-        "daily_papers.json", 
-        "shapiroainews.json",
-        "smolainews.json"
+        #"daily_papers.json", 
+        #"shapiroainews.json",
+        #"smolainews.json",
+        "rss_news.json"
     ]
     
     for source_file in source_files:
@@ -682,6 +511,7 @@ def create_combined_output():
 
         # Check if article is similar to cached articles
         is_similar = False
+        reason="unbound"
         for cached_article in cache_data["articles"]:
             if cached_article.get("title") == title and cached_article.get("content") == content:
                 is_similar = True
@@ -729,7 +559,7 @@ def clean_and_overwrite_articles(filepath: str):
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
             original_articles = data.get("articles", [])
-    except (FileNotFoundError, json.JSONDecodeError) as e:
+    except (FileNotFoundError, json.JSONDecodeError):
         return False
 
     # Regex to find "(Score: ..., Comments: ...):" at the start of the string
@@ -754,24 +584,151 @@ def clean_and_overwrite_articles(filepath: str):
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(output_data, f, indent=2)
         return True
-    except IOError as e:
+    except IOError:
         return False
 
 
-def filter_ai_news_from_file(input_filepath: str):
+def rank_articles_by_importance(client, articles):
+    """Rank articles by importance/relevance and return scored list."""
+    global input_tokens, output_tokens
+    
+    ranking_prompt = """
+You are an expert AI news curator. Rate this article's importance for AI/ML developers on a scale of 1-10.
+
+**HIGH IMPORTANCE (8-10):**
+- Major model releases (GPT, Claude, Llama, etc.)
+- Breakthrough research with immediate practical impact
+- New open-source tools that developers will use
+- Significant performance benchmarks or evaluations
+- Major infrastructure/platform updates
+
+**MEDIUM IMPORTANCE (5-7):**
+- Incremental improvements to existing tools
+- Interesting research with potential future impact
+- Company AI strategy announcements with technical details
+- Industry analysis with actionable insights
+
+**LOW IMPORTANCE (1-4):**
+- Pure business news (funding, acquisitions)
+- High-level strategy without technical content
+- Routine product updates
+- Generic AI adoption stories
+
+Respond with ONLY a number from 1-10. No explanation needed.
+"""
+    
+    scored_articles = []
+    
+    for article in articles:
+        title = article.get("title", "")
+        content = article.get("content", "")
+        
+        prompt = f"Title: {title}\n\nContent: {content[:400]}"
+        
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+                config=GenerateContentConfig(
+                    response_modalities=["TEXT"],
+                    max_output_tokens=5,
+                    temperature=0,
+                    system_instruction=ranking_prompt
+                )
+            )
+            
+            input_tokens += response.usage_metadata.prompt_token_count
+            output_tokens += response.usage_metadata.candidates_token_count
+            
+            score_text = response.candidates[0].content.parts[0].text.strip()
+            try:
+                score = float(score_text)
+                score = max(1, min(10, score))  # Clamp to 1-10 range
+            except ValueError:
+                score = 5  # Default score if parsing fails
+                
+            scored_articles.append({
+                'article': article,
+                'score': score
+            })
+            print(f"  Score {score}/10: {title[:60]}...")
+            
+        except Exception as e:
+            print(f"Error scoring article '{title[:40]}': {e}")
+            scored_articles.append({
+                'article': article,
+                'score': 5  # Default score
+            })
+            
+        time.sleep(0.5)  # Rate limiting
+    
+    # Sort by score (highest first)
+    scored_articles.sort(key=lambda x: x['score'], reverse=True)
+    return scored_articles
+
+def select_diverse_articles(scored_articles, target_count=5):
+    """Select top articles ensuring source and topic diversity."""
+    if len(scored_articles) <= target_count:
+        return [item['article'] for item in scored_articles]
+    
+    selected = []
+    used_sources = set()
+    
+    # First pass: Take highest scoring articles from different sources
+    for item in scored_articles:
+        if len(selected) >= target_count:
+            break
+            
+        article = item['article']
+        source_url = article.get('source_url', '')
+        
+        # Extract domain from URL for diversity check
+        try:
+            domain = urlparse(source_url).netloc.lower()
+            domain = domain.replace('www.', '')  # Normalize
+        except:
+            domain = source_url
+        
+        # Skip if we already have 2 articles from this source
+        source_count = sum(1 for selected_article in selected 
+                          if urlparse(selected_article.get('source_url', '')).netloc.lower().replace('www.', '') == domain)
+        
+        if source_count < 2:  # Max 2 articles per source
+            selected.append(article)
+            used_sources.add(domain)
+            print(f"  ✓ Selected (score {item['score']}): {article.get('title', '')[:60]}...")
+        else:
+            print(f"  ⚠ Skipped for diversity (score {item['score']}): {article.get('title', '')[:60]}...")
+    
+    # Second pass: Fill remaining slots with highest scoring articles
+    if len(selected) < target_count:
+        for item in scored_articles:
+            if len(selected) >= target_count:
+                break
+            if item['article'] not in selected:
+                selected.append(item['article'])
+                print(f"  ✓ Added to fill quota (score {item['score']}): {item['article'].get('title', '')[:60]}...")
+    
+    return selected[:target_count]
+
+def filter_ai_news_from_file(client, model_id, input_filepath: str):
     """
-    Loads cleaned articles, deduplicates by title, filters them for a developer
-    audience using an LLM, and saves the result to a new JSON file.
+    Loads cleaned articles, deduplicates by title, filters them for a developer/business
+    audience using an LLM, ranks by importance, and selects top 5 diverse articles.
+    
+    Args:
+        client: Google GenAI client instance
+        model_id: Model ID (gemini-2.0-flash)
+        input_filepath: Path to input JSON file
     """
     output_filepath = "filtered_ai_news.json"
     
     # --- Setup and Configuration ---
-    load_dotenv()
-    global total_cost
+    global input_tokens, output_tokens
 
     # Updated system prompt focusing on content and specific criteria
     system_prompt = """
-You are an expert AI news curator for a highly technical audience of AI/ML developers, engineers, and researchers. Your primary task is to analyze the **article content** to make your decision.
+You are an expert AI news curator for a highly technical audience of AI/ML developers, business professionals, and researchers. Your primary task is to analyze the **article content** to make your decision.
 
 **KEEP articles if their content is about:**
 - New LLMs, foundational models, or significant model updates (e.g., new position on a leaderboard).
@@ -780,11 +737,12 @@ You are an expert AI news curator for a highly technical audience of AI/ML devel
 - Practical evaluations or comparisons of generative AI tools.
 - Significant research breakthroughs with clear technical implications for developers.
 - Tools which can help in daily office work or tasks or can help technically.
+- Business news or announcements that are relevant to AI/ML developers or business professionals.
 
 **DISCARD articles if their content is primarily about:**
 - Purely business news: funding rounds, investments, valuations, or company acquisitions.
 - General company announcements, marketing, or promotional content.
-- High-level 'AI in business' use cases without technical details.
+- High-level 'AI in business' use cases without technical details or business insights.
 - AI policy, regulation discussions, or generic CEO interviews.
 - Announcements of training programs, cohorts, or educational courses.
 - Entertainment, memes, NSFW, or adult content.
@@ -792,16 +750,7 @@ You are an expert AI news curator for a highly technical audience of AI/ML devel
 Your response MUST be a single word: either KEEP or DISCARD. Do not add any explanation or punctuation.
 """
 
-    try:
-        llm = AzureChatOpenAI(
-            model="gpt-4o-mini",
-            api_version="2024-02-01",
-            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            api_key=SecretStr(os.getenv("AZURE_OPENAI_KEY")),
-            temperature=0,
-        )
-    except (KeyError, TypeError):
-        return
+    # Google client is passed as parameter, no need to initialize
     # --- Load and Deduplicate Articles by Title ---
     try:
         with open(input_filepath, "r", encoding="utf-8") as f:
@@ -828,29 +777,60 @@ Your response MUST be a single word: either KEEP or DISCARD. Do not add any expl
 
 
     # --- Filter Articles with LLM ---
+    print(f"\n=== Filtering {len(unique_articles)} articles for AI relevance ===")
     developer_focused_articles = []
-    for i, article in enumerate(unique_articles):
-        if(len(developer_focused_articles)>7):break
+    
+    for article in unique_articles:
         title = article.get("title", "No Title")
         content = article.get("content", "")
 
         # The LLM will now primarily judge based on the cleaned content
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=f"Title: {title}\n\nContent: {content}")
-        ]
+        full_prompt = f"{system_prompt}\n\nTitle: {title}\n\nContent: {content}"
 
         try:
-            with openai_callback() as cb:
-                response = llm.invoke(messages)
-                total_cost += cb.total_cost
-            decision = response.content.strip().upper()
+            response = client.models.generate_content(
+                model=model_id,
+                contents=full_prompt,
+                config=GenerateContentConfig(
+                    response_modalities=["TEXT"],
+                    maxOutputTokens=50,
+                    temperature=0
+                )
+            )
+            
+            # Count model tokens for cost tracking
+            input_tokens += response.usage_metadata.prompt_token_count
+            output_tokens += response.usage_metadata.candidates_token_count
+            
+            decision = response.candidates[0].content.parts[0].text.strip().upper()
             if decision == "KEEP":
                 developer_focused_articles.append(article)
+                print(f"  ✓ Kept: {title[:60]}...")
+            else:
+                print(f"  ✗ Discarded: {title[:60]}...")
+                
         except Exception as e:
-            raise Exception(f"Filtering error: {e}")
+            print(f"  Error filtering '{title[:40]}': {e}")
+            continue
+    
+    print(f"\n=== Found {len(developer_focused_articles)} relevant articles ===")
+    
+    # --- Rank Articles by Importance ---
+    if len(developer_focused_articles) > 5:
+        print(f"\n=== Ranking articles by importance ===")
+        scored_articles = rank_articles_by_importance(client, developer_focused_articles)
+        
+        print(f"\n=== Selecting top 5 diverse articles ===")
+        final_articles = select_diverse_articles(scored_articles, target_count=5)
+        
+        print(f"\n=== Selected {len(final_articles)} final articles ===")
+    else:
+        # If we have 5 or fewer, keep them all
+        final_articles = developer_focused_articles
+        print(f"Using all {len(final_articles)} articles (≤5 found)")
+    
     # --- Save Filtered Articles to a New JSON File ---
-    output_data = {"articles": developer_focused_articles}
+    output_data = {"articles": final_articles}
 
     save_cache(output_data)
     try:
@@ -860,18 +840,348 @@ Your response MUST be a single word: either KEEP or DISCARD. Do not add any expl
         raise IOError(f"Error writing to file {output_filepath}: {e}")
 
 
+def parse_feed_date(date_str):
+    """Parse various RSS date formats and return datetime object."""
+    if not date_str:
+        return None
+        
+    # Common RSS date formats
+    date_formats = [
+        "%a, %d %b %Y %H:%M:%S %z",  # RFC 2822 format
+        "%a, %d %b %Y %H:%M:%S %Z",  # RFC 2822 with timezone name
+        "%Y-%m-%dT%H:%M:%S%z",       # ISO 8601 with timezone
+        "%Y-%m-%dT%H:%M:%SZ",        # ISO 8601 UTC
+        "%Y-%m-%d %H:%M:%S",         # Simple format
+        "%a, %d %b %Y %H:%M:%S GMT", # GMT format
+        "%Y-%m-%dT%H:%M:%S.%f%z",    # ISO with microseconds and timezone
+        "%Y-%m-%dT%H:%M:%S.%fZ",     # ISO with microseconds UTC
+    ]
+    
+    for fmt in date_formats:
+        try:
+            dt = datetime.strptime(date_str.strip(), fmt)
+            # If no timezone info, assume UTC
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except ValueError:
+            continue
+    
+    # Try parsing with dateutil as fallback
+    try:
+        from dateutil import parser
+        dt = parser.parse(date_str)
+        # If no timezone info, assume UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except:
+        pass
+    
+    print(f"Warning: Could not parse date '{date_str}'")
+    return None
+
+def parse_rss_feeds(client):
+    """Parse RSS feeds from feeds.txt and extract AI-related articles."""
+    global input_tokens, output_tokens
+    
+    # Calculate the timestamp for past 24 hours
+    yesterday = datetime.now().astimezone(timezone.utc) - timedelta(days=1)
+    print(f"Filtering articles published after: {yesterday.isoformat()}")
+    
+    # Load RSS feeds from file
+    try:
+        with open("feeds.txt", "r") as f:
+            feeds = [line.strip() for line in f.readlines() if line.strip()]
+    except FileNotFoundError:
+        print("feeds.txt not found")
+        return []
+    
+    # Define feed categories
+    AI_SPECIFIC_FEEDS = {
+        "https://analyticsindiamag.com/feed/",
+        "https://knowtechie.com/category/ai/feed/",
+        "https://www.artificialintelligence-news.com/feed/rss/",
+        "https://venturebeat.com/category/ai/feed/",
+        "https://siliconangle.com/category/ai/feed",
+        "https://aibusiness.com/rss.xml", 
+        "https://www.theguardian.com/technology/artificialintelligenceai/rss",
+        "https://www.wired.com/feed/tag/ai/latest/rss",
+        "https://aimodels.substack.com/feed",
+        "https://www.normaltech.ai/feed",
+        "https://www.marktechpost.com/feed"
+    }
+    
+    GENERAL_FEEDS = {
+        "https://www.404media.co/rss",
+        "https://feeds.arstechnica.com/arstechnica/index",
+        "https://feeds.businessinsider.com/custom/all",
+        "https://www.sify.com/feed/"
+    }
+    
+    # Skip problematic feeds
+    SKIP_FEEDS = {
+        "https://magazine.sebastianraschka.com/feed", 
+        "https://aiacceleratorinstitute.com/rss/",
+        "https://www.quantamagazine.org/feed"
+    }
+    
+    all_articles = []
+    
+    for feed_url in feeds:
+        if feed_url in SKIP_FEEDS:
+            print(f"Skipping problematic feed: {feed_url}")
+            continue
+            
+        try:
+            print(f"Processing feed: {feed_url}")
+            feed_response = requests.get(feed_url,impersonate="chrome")
+            # Use feedparser to parse the feed
+            feed = feedparser.parse(feed_response.content)
+            
+            if feed.bozo:
+                print(f"Warning: Feed {feed_url} has parsing issues: {feed.bozo_exception}")
+            
+            articles = []
+            
+            for entry in feed.entries:
+                title = getattr(entry, 'title', '').strip()
+                
+                # Get content from various possible fields
+                content = ''
+                if hasattr(entry, 'content') and entry.content:
+                    content = entry.content[0] if isinstance(entry.content, list) else entry.content
+                    if content.type == "text/html":
+                        content = BeautifulSoup(content.value, 'html.parser').get_text()
+                    else: content = content.value
+                elif hasattr(entry, 'summary'):
+                    content = entry.summary
+                elif hasattr(entry, 'description'):
+                    content = entry.description
+                
+                link = getattr(entry, 'link', '').strip()
+                
+                # Get published date
+                pub_date = None
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    pub_date = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+                elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
+                    pub_date = datetime(*entry.updated_parsed[:6], tzinfo=timezone.utc)
+                
+                # Filter by date (past 24 hours only)
+                if pub_date and pub_date < yesterday:
+                    continue  # Skip articles older than 24 hours
+                
+                # Clean HTML from content
+                content = re.sub(r'<[^>]+>', '', content) if content else ''
+                
+                if title and content and link:
+                    articles.append({
+                        "title": title,
+                        "content": content[:500],  # Limit content length
+                        "source_url": link
+                    })
+            
+            print(f"Found {len(articles)} articles from {feed_url}")
+            
+            # Filter articles based on feed type
+            if feed_url in AI_SPECIFIC_FEEDS:
+                # AI-specific feeds - include all articles
+                all_articles.extend(articles)
+                print(f"Added all {len(articles)} articles from AI-specific feed")
+            elif feed_url in GENERAL_FEEDS:
+                # General feeds - check categories first, then use LLM for remaining
+                ai_articles_from_categories = []
+                remaining_articles = []
+                
+                # Extract categories from original feed entries and check for AI-related terms
+                ai_category_terms = {
+                    'ai', 'artificial intelligence', 'machine learning', 'ml', 'deep learning',
+                    'neural network', 'neural networks', 'chatgpt', 'gpt', 'gpt-4', 'gpt-3',
+                    'llm', 'large language model', 'large language models', 'transformer',
+                    'computer vision', 'nlp', 'natural language processing', 'robotics',
+                    'automation', 'openai', 'anthropic', 'google ai', 'microsoft ai',
+                    'ai research', 'ai technology', 'ai tools', 'generative ai', 'gen ai',
+                    'claude', 'gemini', 'llama', 'hugging face', 'tensorflow', 'pytorch',
+                    'stable diffusion', 'midjourney', 'dall-e', 'ai model', 'ai models',
+                    'data science', 'predictive analytics', 'supervised learning',
+                    'unsupervised learning', 'reinforcement learning', 'ai ethics',
+                    'ai safety', 'agi', 'artificial general intelligence', 'ai chips',
+                    'gpu', 'nvidia ai', 'ai hardware', 'ai software', 'ai startup',
+                    'ai company', 'machine intelligence'
+                }
+                
+                for i, article in enumerate(articles):
+                    is_ai_by_category = False
+                    
+                    # Check if we can find the corresponding feed entry to get categories
+                    if i < len(feed.entries):
+                        entry = feed.entries[i]
+                        categories = []
+                        
+                        # Extract categories from different possible fields
+                        try:
+                            if hasattr(entry, 'tags') and entry.tags:
+                                for tag in entry.tags:
+                                    if hasattr(tag, 'term') and tag.term:
+                                        categories.append(tag.term.lower())
+                                    elif hasattr(tag, 'label') and tag.label:
+                                        categories.append(tag.label.lower())
+                                    elif isinstance(tag, str):
+                                        categories.append(tag.lower())
+                                    else:
+                                        categories.append(str(tag).lower())
+                            
+                            if hasattr(entry, 'categories') and entry.categories:
+                                for cat in entry.categories:
+                                    if isinstance(cat, str):
+                                        categories.append(cat.lower())
+                                    elif hasattr(cat, 'term'):
+                                        categories.append(cat.term.lower())
+                                    else:
+                                        categories.append(str(cat).lower())
+                            
+                            if hasattr(entry, 'category') and entry.category:
+                                categories.append(str(entry.category).lower())
+                        except Exception as e:
+                            print(f"    Warning: Error extracting categories for article: {e}")
+                        
+                        # Check if any category matches AI-related terms
+                        for category in categories:
+                            if any(ai_term in category for ai_term in ai_category_terms):
+                                is_ai_by_category = True
+                                print(f"  ✓ AI by category '{category}': {article.get('title', '')[:60]}...")
+                                break
+                    
+                    # If no AI category found, check title and content as fallback
+                    if not is_ai_by_category:
+                        title = article.get('title', '').lower()
+                        content = article.get('content', '').lower()
+                        text_to_check = f"{title} {content}"
+                        
+                        # Check for AI terms in title/content (more strict matching for text)
+                        strict_ai_terms = {
+                            'artificial intelligence', 'machine learning', 'deep learning',
+                            'chatgpt', 'gpt-4', 'gpt-3', 'openai', 'anthropic', 'claude',
+                            'large language model', 'neural network', 'computer vision',
+                            'natural language processing', 'generative ai'
+                        }
+                        
+                        for ai_term in strict_ai_terms:
+                            if ai_term in text_to_check:
+                                is_ai_by_category = True
+                                print(f"  ✓ AI by content term '{ai_term}': {article.get('title', '')[:60]}...")
+                                break
+                    
+                    if is_ai_by_category:
+                        ai_articles_from_categories.append(article)
+                    else:
+                        remaining_articles.append(article)
+                
+                # Use LLM to classify remaining articles
+                ai_articles_from_llm = filter_articles_for_ai_content(client, remaining_articles, feed_url)
+                
+                # Combine results
+                total_ai_articles = ai_articles_from_categories + ai_articles_from_llm
+                all_articles.extend(total_ai_articles)
+                print(f"Added {len(total_ai_articles)} AI-related articles from general feed ({len(ai_articles_from_categories)} by category, {len(ai_articles_from_llm)} by LLM)")
+            else:
+                # Unknown feeds - conservative filtering
+                ai_articles = filter_articles_for_ai_content(client, articles, feed_url)
+                all_articles.extend(ai_articles)
+                print(f"Added {len(ai_articles)} AI-related articles from unknown feed")
+                
+        except Exception as e:
+            print(f"Error processing feed {feed_url}: {e}")
+            continue
+    
+    return all_articles
+
+def filter_articles_for_ai_content(client, articles, feed_url):
+    """Filter articles for AI-related content using LLM classification."""
+    global input_tokens, output_tokens
+    
+    if not articles:
+        return []
+    
+    ai_articles = []
+    
+    system_prompt = """
+    You are an expert AI content classifier. Your task is to determine if a news article is related to artificial intelligence, machine learning, or AI technology.
+
+    INCLUDE articles about:
+    - AI research, models, algorithms, techniques
+    - Machine learning breakthroughs and applications  
+    - Large language models, ChatGPT, GPT, Claude, etc.
+    - AI companies, startups, investments in AI
+    - AI ethics, regulation, safety
+    - Computer vision, natural language processing
+    - Robotics and automation
+    - AI tools and applications
+    - Neural networks, deep learning
+    - AI in specific industries (healthcare AI, autonomous vehicles, etc.)
+
+    EXCLUDE articles about:
+    - General technology news unrelated to AI
+    - Pure business news without AI focus
+    - Politics, sports, entertainment (unless AI-related)
+    - Traditional software development
+    - Hardware reviews (unless AI-specific)
+    - General science news without AI connection
+
+    Respond with only 'YES' if the article is AI-related, or 'NO' if it is not. No explanation needed.
+    """
+    
+    for article in articles[:10]:  # Limit to first 10 articles per feed to control costs
+        title = article.get("title", "")
+        content = article.get("content", "")
+        
+        prompt = f"Title: {title}\n\nContent: {content[:300]}"  # Limit content to reduce costs
+        
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+                config=GenerateContentConfig(
+                    response_modalities=["TEXT"],
+                    maxOutputTokens=5,
+                    temperature=0,
+                    system_instruction=system_prompt
+                )
+            )
+            
+            input_tokens += response.usage_metadata.prompt_token_count
+            output_tokens += response.usage_metadata.candidates_token_count
+            
+            decision = response.candidates[0].content.parts[0].text.strip().upper()
+            
+            if decision == "YES":
+                ai_articles.append(article)
+                print(f"  ✓ AI article: {title[:60]}...")
+            else:
+                print(f"  ✗ Not AI: {title[:60]}...")
+                
+        except Exception as e:
+            print(f"Error classifying article '{title[:40]}': {e}")
+            continue
+            
+        # Add small delay to respect rate limits
+        time.sleep(0.5)
+    
+    return ai_articles
+
 def main():
     """
     Main function to run for AI news.
     """
     global total_cost
     load_dotenv()
-    GITHUB_TRENDING_URL = "https://github.com/trending"
-    REPO_OUTPUT_FILE = "trending_repos.json"
+    #GITHUB_TRENDING_URL = "https://github.com/trending"
+    #REPO_OUTPUT_FILE = "trending_repos.json"
 
 
     ## smol ai news
-    latest_issue_url = get_latest_issue_url()
+    #latest_issue_url = get_latest_issue_url()
 
     # Use timezone-aware datetime with .now() and datetime.timezone.utc
     
@@ -879,6 +1189,7 @@ def main():
 
     # format time to string
     yesterday_str = yesterday.strftime("%y-%m-%d")
+    """
     if latest_issue_url and yesterday_str in latest_issue_url:
         try:
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
@@ -894,8 +1205,11 @@ def main():
                     json.dump(final_output, f, ensure_ascii=False, indent=2)
         except requests.exceptions.RequestException as e:
             raise RuntimeError(f"Failed to fetch the issue page content from smol ai newsletter: {e}")        
-
-     ## ai news
+    else:
+        if os.path.exists("smolainews.json"):
+            os.remove("smolainews.json")
+    """
+    ## ai news
     session = requests.Session()
     session.headers.update(HEADERS)
     # if os.path.exists("shapiroainews.json"):
@@ -914,7 +1228,7 @@ def main():
     if latest_url:
     #Downloading article
         resp = fetch_url(session, latest_url)
-        soup = BeautifulSoup(resp.text, "html.parser")
+        soup = BeautifulSoup(resp.text if resp is not None else "", "html.parser")
 
         #Extracting Today’s Headlines (only today's items; exclude AI Tools which can be older)
         todays = extract_section(soup, section_id="todays-headlines", stop_id="ai-tools")
@@ -925,18 +1239,14 @@ def main():
         with open("shapiroainews.json", "w", encoding="utf-8") as f:
             json.dump({"articles": all_articles}, f, ensure_ascii=False, indent=2)
     
+    else:
+        if os.path.exists("shapiroainews.json"):
+            os.remove("shapiroainews.json")
 
     #time.sleep(10)
     # Create combined output
 
-    # Initialize Azure OpenAI model instance
-    llm = AzureChatOpenAI(
-            model="gpt-4o-mini",
-            api_version='2024-12-01-preview',
-            azure_endpoint=os.getenv('AZURE_OPENAI_ENDPOINT', ''),
-            api_key=SecretStr(os.getenv('AZURE_OPENAI_KEY', '')),
-            )
-
+    # Initialize Google AI client
     google_api_key = os.getenv("GOOGLE_API_KEY")
     model_id = "gemini-2.0-flash"
     client = genai.Client(api_key=google_api_key)
@@ -944,8 +1254,18 @@ def main():
     get_reddit_posts(client)
     fetch_and_save_papers_rss_to_json()
 
+    # Parse RSS feeds and save to file
+    print("\n=== Processing RSS Feeds ===")
+    rss_articles = parse_rss_feeds(client)
+    if rss_articles:
+        with open("rss_news.json", "w", encoding="utf-8") as f:
+            json.dump({"articles": rss_articles}, f, ensure_ascii=False, indent=2)
+        print(f"Saved {len(rss_articles)} RSS articles to rss_news.json")
+    else:
+        print("No RSS articles found")
+
     # search AI news only if ai_news.json has less than 10 articles
-    combined_news_path = "ai_news.json"
+    #combined_news_path = "ai_news.json"
     #run_search_ai_news = True
     #if os.path.exists(combined_news_path):
     #    try:
@@ -960,15 +1280,6 @@ def main():
     #search_ai_news(client, model_id, yesterday_str)
 
     # scrape GitHub trending repositories
-    scraped_repos = scrape_github_trending(github_url=GITHUB_TRENDING_URL)
-    
-    if not scraped_repos:
-        # Still create an empty file
-        save_to_json([], REPO_OUTPUT_FILE)
-        return
-        
-    relevant_repos = filter_repos_with_ai(llm,scraped_repos)
-    save_to_json(relevant_repos, REPO_OUTPUT_FILE)
     create_combined_output()
 
     # Define the path to your single news file
@@ -980,7 +1291,7 @@ def main():
         # The function returns False if it fails, so we can stop the process.
         if clean_and_overwrite_articles(news_json_file):
             # Step 2: Run the filtering process on the now-cleaned file.
-            filter_ai_news_from_file(news_json_file)
+            filter_ai_news_from_file(client, model_id, news_json_file)
     print(f"Input tokens: {input_tokens}")
     print(f"Output tokens: {output_tokens}")
     print(f"Total cost: ${total_cost:.6f}")
